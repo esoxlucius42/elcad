@@ -740,7 +740,7 @@ Gizmo::DragDelta Gizmo::updateDrag(const QVector3D& rayO, const QVector3D& rayD,
         while (da >  180.f) da -= 360.f;
         while (da < -180.f) da += 360.f;
         delta.rotAxis  = m_dragAxis;
-        delta.rotAngle = da;
+        delta.rotAngle = -da;
         break;
     }
 
