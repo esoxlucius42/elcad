@@ -41,9 +41,6 @@ private:
 
     // 3D operation helpers
     void onExtrude();
-    void onMove();
-    void onRotate();
-    void onScale();
     void onMirror();
     void onBooleanUnion();
     void onBooleanSubtract();

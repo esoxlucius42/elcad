@@ -3,7 +3,7 @@
 #include "ui/BodyListPanel.h"
 #include "ui/PropertiesPanel.h"
 #include "ui/ExtrudeDialog.h"
-#include "ui/TransformDialog.h"
+#include "ui/MirrorDialog.h"
 #include "ui/BooleanDialog.h"
 #include "ui/ShortcutsDialog.h"
 #include "core/Logger.h"
@@ -296,9 +296,6 @@ void MainWindow::setupToolBar()
     tb->addSeparator();
     tb->addWidget(new QLabel("  3D: "));
     auto* actExtrude  = tb->addAction("Extrude");
-    auto* actMove     = tb->addAction("Move");
-    auto* actRotate   = tb->addAction("Rotate");
-    auto* actScale    = tb->addAction("Scale");
     auto* actMirror   = tb->addAction("Mirror");
 
     tb->addSeparator();
@@ -307,15 +304,11 @@ void MainWindow::setupToolBar()
     auto* actSubtract = tb->addAction("Subtract");
 
     connect(actExtrude,  &QAction::triggered, this, &MainWindow::onExtrude);
-    connect(actMove,     &QAction::triggered, this, &MainWindow::onMove);
-    connect(actRotate,   &QAction::triggered, this, &MainWindow::onRotate);
-    connect(actScale,    &QAction::triggered, this, &MainWindow::onScale);
     connect(actMirror,   &QAction::triggered, this, &MainWindow::onMirror);
     connect(actUnion,    &QAction::triggered, this, &MainWindow::onBooleanUnion);
     connect(actSubtract, &QAction::triggered, this, &MainWindow::onBooleanSubtract);
 
-    Q_UNUSED(actExtrude) Q_UNUSED(actMove) Q_UNUSED(actRotate)
-    Q_UNUSED(actScale) Q_UNUSED(actMirror) Q_UNUSED(actUnion) Q_UNUSED(actSubtract)
+    Q_UNUSED(actExtrude) Q_UNUSED(actMirror) Q_UNUSED(actUnion) Q_UNUSED(actSubtract)
 }
 
 // ── Docks ─────────────────────────────────────────────────────────────────────
@@ -605,129 +598,6 @@ void MainWindow::onExtrude()
 #endif
 }
 
-void MainWindow::onMove()
-{
-#ifdef ELCAD_HAVE_OCCT
-    Body* body = m_document->singleSelectedBody();
-    if (!body || !body->hasShape()) {
-        LOG_WARN("Move: no single body selected");
-        QMessageBox::warning(this, "Move", "Select exactly one body first."); return;
-    }
-    TransformDialog dlg(TransformDialog::Move, this);
-    if (dlg.exec() != QDialog::Accepted) { LOG_DEBUG("Move: dialog cancelled"); return; }
-
-    LOG_INFO("Move: body id={} name='{}' delta=({:.4f},{:.4f},{:.4f})",
-             body->id(), body->name().toStdString(), dlg.dx(), dlg.dy(), dlg.dz());
-
-    TopoDS_Shape oldShape = body->shape();
-    TopoDS_Shape newShape = TransformOps::translate(oldShape,
-        dlg.dx(), dlg.dy(), dlg.dz());
-
-    quint64 id = body->id();
-    m_document->undoStack().push(std::make_unique<LambdaCommand>("Move",
-        [this, id, oldShape]() {
-            if (Body* b = m_document->bodyById(id)) {
-                b->setShape(oldShape); m_viewport->renderer().invalidateMesh(id);
-                emit m_document->bodyChanged(b);
-            }
-        },
-        [this, id, newShape]() {
-            if (Body* b = m_document->bodyById(id)) {
-                b->setShape(newShape); m_viewport->renderer().invalidateMesh(id);
-                emit m_document->bodyChanged(b);
-            }
-        }));
-
-    body->setShape(newShape);
-    m_viewport->renderer().invalidateMesh(id);
-    emit m_document->bodyChanged(body);
-#endif
-}
-
-void MainWindow::onRotate()
-{
-#ifdef ELCAD_HAVE_OCCT
-    Body* body = m_document->singleSelectedBody();
-    if (!body || !body->hasShape()) {
-        LOG_WARN("Rotate: no single body selected");
-        QMessageBox::warning(this, "Rotate", "Select exactly one body first."); return;
-    }
-    TransformDialog dlg(TransformDialog::Rotate, this);
-    if (dlg.exec() != QDialog::Accepted) { LOG_DEBUG("Rotate: dialog cancelled"); return; }
-
-    LOG_INFO("Rotate: body id={} name='{}' axis=({:.3f},{:.3f},{:.3f}) "
-             "origin=({:.3f},{:.3f},{:.3f}) angle={:.3f}°",
-             body->id(), body->name().toStdString(),
-             dlg.axisX(), dlg.axisY(), dlg.axisZ(),
-             dlg.originX(), dlg.originY(), dlg.originZ(), dlg.angleDeg());
-
-    TopoDS_Shape oldShape = body->shape();
-    TopoDS_Shape newShape = TransformOps::rotate(oldShape,
-        dlg.axisX(), dlg.axisY(), dlg.axisZ(),
-        dlg.originX(), dlg.originY(), dlg.originZ(),
-        dlg.angleDeg());
-
-    quint64 id = body->id();
-    m_document->undoStack().push(std::make_unique<LambdaCommand>("Rotate",
-        [this, id, oldShape]() {
-            if (Body* b = m_document->bodyById(id)) {
-                b->setShape(oldShape); m_viewport->renderer().invalidateMesh(id);
-                emit m_document->bodyChanged(b);
-            }
-        },
-        [this, id, newShape]() {
-            if (Body* b = m_document->bodyById(id)) {
-                b->setShape(newShape); m_viewport->renderer().invalidateMesh(id);
-                emit m_document->bodyChanged(b);
-            }
-        }));
-
-    body->setShape(newShape);
-    m_viewport->renderer().invalidateMesh(id);
-    emit m_document->bodyChanged(body);
-#endif
-}
-
-void MainWindow::onScale()
-{
-#ifdef ELCAD_HAVE_OCCT
-    Body* body = m_document->singleSelectedBody();
-    if (!body || !body->hasShape()) {
-        LOG_WARN("Scale: no single body selected");
-        QMessageBox::warning(this, "Scale", "Select exactly one body first."); return;
-    }
-    TransformDialog dlg(TransformDialog::Scale, this);
-    if (dlg.exec() != QDialog::Accepted) { LOG_DEBUG("Scale: dialog cancelled"); return; }
-
-    LOG_INFO("Scale: body id={} name='{}' origin=({:.3f},{:.3f},{:.3f}) factor={:.4f}",
-             body->id(), body->name().toStdString(),
-             dlg.scaleOX(), dlg.scaleOY(), dlg.scaleOZ(), dlg.scaleFactor());
-
-    TopoDS_Shape oldShape = body->shape();
-    TopoDS_Shape newShape = TransformOps::scale(oldShape,
-        dlg.scaleOX(), dlg.scaleOY(), dlg.scaleOZ(), dlg.scaleFactor());
-
-    quint64 id = body->id();
-    m_document->undoStack().push(std::make_unique<LambdaCommand>("Scale",
-        [this, id, oldShape]() {
-            if (Body* b = m_document->bodyById(id)) {
-                b->setShape(oldShape); m_viewport->renderer().invalidateMesh(id);
-                emit m_document->bodyChanged(b);
-            }
-        },
-        [this, id, newShape]() {
-            if (Body* b = m_document->bodyById(id)) {
-                b->setShape(newShape); m_viewport->renderer().invalidateMesh(id);
-                emit m_document->bodyChanged(b);
-            }
-        }));
-
-    body->setShape(newShape);
-    m_viewport->renderer().invalidateMesh(id);
-    emit m_document->bodyChanged(body);
-#endif
-}
-
 void MainWindow::onMirror()
 {
 #ifdef ELCAD_HAVE_OCCT
@@ -736,7 +606,7 @@ void MainWindow::onMirror()
         LOG_WARN("Mirror: no single body selected");
         QMessageBox::warning(this, "Mirror", "Select exactly one body first."); return;
     }
-    TransformDialog dlg(TransformDialog::Mirror, this);
+    MirrorDialog dlg(this);
     if (dlg.exec() != QDialog::Accepted) { LOG_DEBUG("Mirror: dialog cancelled"); return; }
 
     LOG_INFO("Mirror: body id={} name='{}' plane={}",
