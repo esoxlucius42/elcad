@@ -1,0 +1,12 @@
+<RCC>
+    <qresource prefix="/">
+        <file>shaders/phong.vert</file>
+        <file>shaders/phong.frag</file>
+        <file>shaders/edge.vert</file>
+        <file>shaders/edge.frag</file>
+        <file>shaders/grid.vert</file>
+        <file>shaders/grid.frag</file>
+        <file>shaders/gizmo.vert</file>
+        <file>shaders/gizmo.frag</file>
+    </qresource>
+</RCC>

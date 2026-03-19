@@ -1,0 +1,6 @@
+
+   1. ✓ 3D gizmo — interactive translate/rotate/scale handles in the viewport (DONE)
+   2. Test full workflow — verify sketch → extrude → STEP export end-to-end
+   3. Undo/redo fix — extrude "New Body" redo is a no-op (undo removes the body but redo doesn't re-add it)
+   4. Arc tool — SketchEntity::Arc is defined but no ArcTool exists
+   5. Sketch on face — SketchPlane::fromFace() implemented but not wired to UI2
