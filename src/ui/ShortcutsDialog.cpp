@@ -24,6 +24,7 @@ ShortcutsDialog::ShortcutsDialog(QWidget* parent)
         { "Ctrl+S",       "Export STEP"              },
         // View
         { "G",            "Toggle grid"              },
+        { "Shift+G",      "Toggle snap"              },
         { "F",            "Fit all"                  },
         { "P",            "Toggle perspective/ortho" },
         { "1 / Num 1",    "Front view"               },

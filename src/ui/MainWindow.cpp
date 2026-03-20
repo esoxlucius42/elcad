@@ -171,6 +171,14 @@ void MainWindow::setupMenuBar()
         m_viewport->update();
     });
 
+    auto* actSnap = view->addAction("Toggle &Snap");
+    actSnap->setShortcut(QKeySequence("Shift+G"));
+    connect(actSnap, &QAction::triggered, this, [this] {
+        auto& se = m_viewport->snapEngine();
+        se.setSnapEnabled(!se.snapEnabled());
+        m_viewport->update();
+    });
+
     auto* actFit = view->addAction("&Fit All");
     actFit->setShortcut(Qt::Key_F);
     connect(actFit, &QAction::triggered, this, [this] {

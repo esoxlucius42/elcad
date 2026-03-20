@@ -23,6 +23,9 @@ public:
     void setSnapToGrid(bool on)   { m_snapGrid   = on; }
     void setSnapToVertex(bool on) { m_snapVertex = on; }
 
+    bool snapEnabled() const { return m_snapGrid || m_snapVertex; }
+    void setSnapEnabled(bool on) { m_snapGrid = on; m_snapVertex = on; }
+
     // Snap rawPos to nearest grid/vertex.
     // sketch may be nullptr (grid-only snap).
     // snapThresholdMM: world-space distance for vertex snap.

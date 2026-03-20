@@ -441,8 +441,13 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
         update();
         break;
     case Qt::Key_G:
-        m_renderer.setGridVisible(!m_renderer.gridVisible());
-        LOG_DEBUG("Viewport: grid toggled {}", m_renderer.gridVisible() ? "ON" : "OFF");
+        if (e->modifiers() & Qt::ShiftModifier) {
+            m_snapEngine.setSnapEnabled(!m_snapEngine.snapEnabled());
+            LOG_DEBUG("Viewport: snap toggled {}", m_snapEngine.snapEnabled() ? "ON" : "OFF");
+        } else {
+            m_renderer.setGridVisible(!m_renderer.gridVisible());
+            LOG_DEBUG("Viewport: grid toggled {}", m_renderer.gridVisible() ? "ON" : "OFF");
+        }
         update();
         break;
     case Qt::Key_F:
