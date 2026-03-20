@@ -40,7 +40,7 @@ void Renderer::render(Camera& camera, Document* doc,
                       const std::vector<SketchEntity>* sketchPreview,
                       const QVector2D* snapPos)
 {
-    glClearColor(0.12f, 0.12f, 0.12f, 1.0f);
+    glClearColor(0.2f, 0.2f, 0.2f, 1.0f); // #333333
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     QMatrix4x4 view = camera.viewMatrix();
