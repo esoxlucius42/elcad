@@ -7,7 +7,7 @@
     large-arc=1, sweep=1 (clockwise in SVG).
     CW tangent at 20°: (-sin20°, cos20°) ≈ (-0.34, 0.94) → tip ≈ (35, 35)
   -->
-  <path d="M 29,11 A 14,14 0 1 1 37,29"
-        fill="none" stroke="#e0e0e0" stroke-width="4" stroke-linecap="round"/>
-  <polygon points="35,35 33,27 41,30" fill="#e0e0e0"/>
+  <path d="M 28.104,12.720 A 12,12 0 1 1 35.280,28.104"
+        fill="none" stroke="#e0e0e0" stroke-width="3" stroke-linecap="round"/>
+  <polygon points="34,32 31,25 39,28" fill="#e0e0e0"/>
 </svg>
