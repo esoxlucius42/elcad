@@ -147,33 +147,33 @@ RibbonWidget::RibbonWidget(QWidget* parent)
     m_sketchGroup = new RibbonGroup("Sketch", this);
 
     btnFrontPlane = m_sketchGroup->addButton(
-        "Front\nPlane", QIcon(":/assets/icons/front-plane.png"),
+        "Front\nPlane", QIcon(":/assets/icons/front-plane.svg"),
         "Front Plane\nEnter sketch on XZ plane");
 
     btnTopPlane = m_sketchGroup->addButton(
-        "Top\nPlane", QIcon(":/assets/icons/top-plane.png"),
+        "Top\nPlane", QIcon(":/assets/icons/top-plane.svg"),
         "Top Plane\nEnter sketch on XY plane");
 
     btnRightPlane = m_sketchGroup->addButton(
-        "Right\nPlane", QIcon(":/assets/icons/right-plane.png"),
+        "Right\nPlane", QIcon(":/assets/icons/right-plane.svg"),
         "Right Plane\nEnter sketch on YZ plane");
 
     // ── Transform group ───────────────────────────────────────────────────────
     m_transformGroup = new RibbonGroup("Transform", this);
 
     btnMove = m_transformGroup->addButton(
-        "Move", QIcon(":/assets/icons/move.png"),
+        "Move", QIcon(":/assets/icons/move.svg"),
         "Move\nShortcut: T");
     btnMove->setCheckable(true);
     btnMove->setChecked(true);
 
     btnRotate = m_transformGroup->addButton(
-        "Rotate", QIcon(":/assets/icons/rotate.png"),
+        "Rotate", QIcon(":/assets/icons/rotate.svg"),
         "Rotate\nShortcut: R");
     btnRotate->setCheckable(true);
 
     btnScale = m_transformGroup->addButton(
-        "Scale", QIcon(":/assets/icons/scale.png"),
+        "Scale", QIcon(":/assets/icons/scale.svg"),
         "Scale\nShortcut: S");
     btnScale->setCheckable(true);
 
@@ -181,18 +181,18 @@ RibbonWidget::RibbonWidget(QWidget* parent)
     m_modelingGroup = new RibbonGroup("Modeling", this);
 
     btnExtrude = m_modelingGroup->addButton(
-        "Extrude", QIcon(":/assets/icons/extrude.png"), "Extrude");
+        "Extrude", QIcon(":/assets/icons/extrude.svg"), "Extrude");
 
     btnMirror = m_modelingGroup->addButton(
-        "Mirror", QIcon(":/assets/icons/mirror.png"), "Mirror");
+        "Mirror", QIcon(":/assets/icons/mirror.svg"), "Mirror");
 
     m_modelingGroup->addDivider();
 
     btnUnion = m_modelingGroup->addButton(
-        "Union", QIcon(":/assets/icons/union.png"), "Union");
+        "Union", QIcon(":/assets/icons/union.svg"), "Union");
 
     btnSubtract = m_modelingGroup->addButton(
-        "Subtract", QIcon(":/assets/icons/subtract.png"), "Subtract");
+        "Subtract", QIcon(":/assets/icons/subtract.svg"), "Subtract");
 
     // ── Drawing group (sketch mode, initially hidden) ─────────────────────────
     m_drawingGroup = new RibbonGroup("Drawing Tools", this);

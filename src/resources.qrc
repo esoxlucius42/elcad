@@ -8,15 +8,15 @@
         <file>shaders/grid.frag</file>
         <file>shaders/gizmo.vert</file>
         <file>shaders/gizmo.frag</file>
-        <file>assets/icons/front-plane.png</file>
-        <file>assets/icons/top-plane.png</file>
-        <file>assets/icons/right-plane.png</file>
-        <file>assets/icons/move.png</file>
-        <file>assets/icons/rotate.png</file>
-        <file>assets/icons/scale.png</file>
-        <file>assets/icons/extrude.png</file>
-        <file>assets/icons/mirror.png</file>
-        <file>assets/icons/union.png</file>
-        <file>assets/icons/subtract.png</file>
+        <file>assets/icons/front-plane.svg</file>
+        <file>assets/icons/top-plane.svg</file>
+        <file>assets/icons/right-plane.svg</file>
+        <file>assets/icons/move.svg</file>
+        <file>assets/icons/rotate.svg</file>
+        <file>assets/icons/scale.svg</file>
+        <file>assets/icons/extrude.svg</file>
+        <file>assets/icons/mirror.svg</file>
+        <file>assets/icons/union.svg</file>
+        <file>assets/icons/subtract.svg</file>
     </qresource>
 </RCC>
