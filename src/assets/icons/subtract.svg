@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="6" fill="#2e2e2e"/>
+  <!-- Main shape (blue circle) -->
+  <circle cx="21" cy="24" r="14" fill="#4a9eff"/>
+  <!-- Cutting shape punches a hole (same as background color) -->
+  <circle cx="30" cy="24" r="11" fill="#2e2e2e"/>
+  <!-- Cutting shape outline (shows the cutter boundary) -->
+  <circle cx="30" cy="24" r="11" fill="none" stroke="#e0e0e0" stroke-width="1.5"/>
+</svg>

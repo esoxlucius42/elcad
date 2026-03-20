@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="6" fill="#2e2e2e"/>
+  <g stroke="#e0e0e0" fill="#e0e0e0">
+    <!-- Diagonal lines from center to each corner -->
+    <line x1="24" y1="24" x2="13" y2="13" stroke-width="2"/>
+    <line x1="24" y1="24" x2="35" y2="13" stroke-width="2"/>
+    <line x1="24" y1="24" x2="13" y2="35" stroke-width="2"/>
+    <line x1="24" y1="24" x2="35" y2="35" stroke-width="2"/>
+    <!-- Corner arrowheads -->
+    <polygon points="7,7  7,15 15,7"/>
+    <polygon points="41,7  33,7  41,15"/>
+    <polygon points="7,41  15,41  7,33"/>
+    <polygon points="41,41  41,33  33,41"/>
+  </g>
+</svg>

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="6" fill="#2e2e2e"/>
+  <!-- Top face -->
+  <polygon points="24,9 38,17 24,25 10,17" fill="#454545" stroke="#666" stroke-width="0.8"/>
+  <!-- Left face (YZ = Right) highlighted -->
+  <polygon points="10,17 24,25 24,39 10,31" fill="#3d7fc1" stroke="#5a9fd4" stroke-width="0.8"/>
+  <!-- Right face -->
+  <polygon points="24,25 38,17 38,31 24,39" fill="#404040" stroke="#666" stroke-width="0.8"/>
+  <text x="17" y="31" font-family="sans-serif" font-size="10" font-weight="bold" fill="white" text-anchor="middle">R</text>
+</svg>

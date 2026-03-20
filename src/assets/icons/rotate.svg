@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="6" fill="#2e2e2e"/>
+  <!--
+    270° clockwise arc, radius 14, center (24,24).
+    Start at ~-70° from +x: (24+14·cos(-70°), 24+14·sin(-70°)) ≈ (29, 11)
+    End   at ~+20° from +x: (24+14·cos( 20°), 24+14·sin( 20°)) ≈ (37, 29)
+    large-arc=1, sweep=1 (clockwise in SVG).
+    CW tangent at 20°: (-sin20°, cos20°) ≈ (-0.34, 0.94) → tip ≈ (35, 35)
+  -->
+  <path d="M 29,11 A 14,14 0 1 1 37,29"
+        fill="none" stroke="#e0e0e0" stroke-width="4" stroke-linecap="round"/>
+  <polygon points="35,35 33,27 41,30" fill="#e0e0e0"/>
+</svg>

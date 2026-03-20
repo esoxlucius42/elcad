@@ -6,6 +6,7 @@
 #include "ui/MirrorDialog.h"
 #include "ui/BooleanDialog.h"
 #include "ui/ShortcutsDialog.h"
+#include "ui/RibbonWidget.h"
 #include "core/Logger.h"
 #include "viewport/Gizmo.h"
 #include "sketch/SketchPlane.h"
@@ -57,7 +58,7 @@ MainWindow::MainWindow(QWidget* parent)
     setCentralWidget(m_viewport);
 
     setupMenuBar();
-    setupToolBar();
+    setupRibbon();
     setupDocks();
     setupStatusBar();
 
@@ -101,7 +102,7 @@ MainWindow::MainWindow(QWidget* parent)
         } else {
             m_viewport->exitSketchMode();
             m_statusMode->setText("Mode: Select");
-            if (m_actExitSketch) m_actExitSketch->setVisible(false);
+            if (m_ribbon) m_ribbon->setSketchMode(false);
         }
     });
     connect(m_viewport, &ViewportWidget::requestExitSketch,
@@ -216,107 +217,60 @@ void MainWindow::setupMenuBar()
 
 // ── Tool Bar ───────────────────────────────────────────────────────────────────
 
-void MainWindow::setupToolBar()
+void MainWindow::setupRibbon()
 {
-    auto* tb = addToolBar("Tools");
+    auto* tb = addToolBar("Ribbon");
     tb->setMovable(false);
-    tb->setIconSize(QSize(20, 20));
+    tb->setFloatable(false);
+    tb->setStyleSheet("QToolBar { background: #1a1a1a; border: none; padding: 0; spacing: 0; }");
 
-    // ── Sketch entry ─────────────────────────────────────────────────────────
-    tb->addWidget(new QLabel("  Sketch: "));
+    m_ribbon = new RibbonWidget(this);
+    tb->addWidget(m_ribbon);
 
-    auto* actSketchXZ = tb->addAction("XZ Plane");
-    actSketchXZ->setToolTip("Enter sketch on XZ plane (front)");
-    connect(actSketchXZ, &QAction::triggered, this, [this]{ enterSketch(0); });
+    // ── Sketch plane entry ────────────────────────────────────────────────────
+    connect(m_ribbon->btnFrontPlane, &QToolButton::clicked,
+            this, [this]{ enterSketch(0); });
+    connect(m_ribbon->btnTopPlane,   &QToolButton::clicked,
+            this, [this]{ enterSketch(1); });
+    connect(m_ribbon->btnRightPlane, &QToolButton::clicked,
+            this, [this]{ enterSketch(2); });
 
-    auto* actSketchXY = tb->addAction("XY Plane");
-    actSketchXY->setToolTip("Enter sketch on XY plane (ground)");
-    connect(actSketchXY, &QAction::triggered, this, [this]{ enterSketch(1); });
-
-    auto* actSketchYZ = tb->addAction("YZ Plane");
-    actSketchYZ->setToolTip("Enter sketch on YZ plane (side)");
-    connect(actSketchYZ, &QAction::triggered, this, [this]{ enterSketch(2); });
-
-    tb->addSeparator();
-
-    // ── Sketch drawing tools (visible only while in sketch mode) ─────────────
-    m_actLine = tb->addAction("Line");
-    m_actLine->setCheckable(true);
-    m_actLine->setToolTip("Line tool (chained)");
-    m_actLine->setVisible(false);
-    connect(m_actLine, &QAction::triggered, this, [this]{ activateSketchTool(1); });
-
-    m_actRect = tb->addAction("Rect");
-    m_actRect->setCheckable(true);
-    m_actRect->setToolTip("Rectangle tool");
-    m_actRect->setVisible(false);
-    connect(m_actRect, &QAction::triggered, this, [this]{ activateSketchTool(2); });
-
-    m_actCircle = tb->addAction("Circle");
-    m_actCircle->setCheckable(true);
-    m_actCircle->setToolTip("Circle tool");
-    m_actCircle->setVisible(false);
-    connect(m_actCircle, &QAction::triggered, this, [this]{ activateSketchTool(3); });
-
-    m_actCons = tb->addAction("Constr.");
-    m_actCons->setCheckable(true);
-    m_actCons->setToolTip("Construction line tool");
-    m_actCons->setVisible(false);
-    connect(m_actCons, &QAction::triggered, this, [this]{ activateSketchTool(4); });
-
-    m_actExitSketch = tb->addAction("⏎ Exit Sketch");
-    m_actExitSketch->setToolTip("Finish sketch and return to 3D mode");
-    m_actExitSketch->setVisible(false);
-    connect(m_actExitSketch, &QAction::triggered, this, &MainWindow::exitSketch);
-
-    tb->addSeparator();
-
-    // ── Gizmo mode (visible only in 3D mode, not sketch mode) ───────────────
-    tb->addWidget(new QLabel("  Gizmo: "));
-
-    m_actGizmoTranslate = tb->addAction("Move [T]");
-    m_actGizmoTranslate->setCheckable(true);
-    m_actGizmoTranslate->setChecked(true);
-    m_actGizmoTranslate->setToolTip("Translate gizmo (T)");
-
-    m_actGizmoRotate = tb->addAction("Rotate [R]");
-    m_actGizmoRotate->setCheckable(true);
-    m_actGizmoRotate->setToolTip("Rotate gizmo (R)");
-
-    m_actGizmoScale = tb->addAction("Scale [S]");
-    m_actGizmoScale->setCheckable(true);
-    m_actGizmoScale->setToolTip("Scale gizmo (S)");
-
-    auto syncGizmoActions = [this](GizmoMode mode) {
-        m_actGizmoTranslate->setChecked(mode == GizmoMode::Translate);
-        m_actGizmoRotate->setChecked   (mode == GizmoMode::Rotate);
-        m_actGizmoScale->setChecked    (mode == GizmoMode::Scale);
+    // ── Gizmo mode (radio-style checkable buttons) ────────────────────────────
+    auto syncGizmoButtons = [this](GizmoMode mode) {
+        m_ribbon->btnMove->setChecked  (mode == GizmoMode::Translate);
+        m_ribbon->btnRotate->setChecked(mode == GizmoMode::Rotate);
+        m_ribbon->btnScale->setChecked (mode == GizmoMode::Scale);
         m_viewport->setGizmoMode(mode);
     };
 
-    connect(m_actGizmoTranslate, &QAction::triggered, this,
-            [=]{ syncGizmoActions(GizmoMode::Translate); });
-    connect(m_actGizmoRotate, &QAction::triggered, this,
-            [=]{ syncGizmoActions(GizmoMode::Rotate); });
-    connect(m_actGizmoScale, &QAction::triggered, this,
-            [=]{ syncGizmoActions(GizmoMode::Scale); });
+    connect(m_ribbon->btnMove,   &QToolButton::clicked,
+            this, [=]{ syncGizmoButtons(GizmoMode::Translate); });
+    connect(m_ribbon->btnRotate, &QToolButton::clicked,
+            this, [=]{ syncGizmoButtons(GizmoMode::Rotate); });
+    connect(m_ribbon->btnScale,  &QToolButton::clicked,
+            this, [=]{ syncGizmoButtons(GizmoMode::Scale); });
 
-    tb->addSeparator();
-    tb->addWidget(new QLabel("  3D: "));
-    auto* actExtrude  = tb->addAction("Extrude");
-    auto* actMirror   = tb->addAction("Mirror");
+    // ── 3D operations ─────────────────────────────────────────────────────────
+    connect(m_ribbon->btnExtrude,  &QToolButton::clicked,
+            this, &MainWindow::onExtrude);
+    connect(m_ribbon->btnMirror,   &QToolButton::clicked,
+            this, &MainWindow::onMirror);
+    connect(m_ribbon->btnUnion,    &QToolButton::clicked,
+            this, &MainWindow::onBooleanUnion);
+    connect(m_ribbon->btnSubtract, &QToolButton::clicked,
+            this, &MainWindow::onBooleanSubtract);
 
-    tb->addSeparator();
-    tb->addWidget(new QLabel(" Bool: "));
-    auto* actUnion    = tb->addAction("Union");
-    auto* actSubtract = tb->addAction("Subtract");
-
-    connect(actExtrude,  &QAction::triggered, this, &MainWindow::onExtrude);
-    connect(actMirror,   &QAction::triggered, this, &MainWindow::onMirror);
-    connect(actUnion,    &QAction::triggered, this, &MainWindow::onBooleanUnion);
-    connect(actSubtract, &QAction::triggered, this, &MainWindow::onBooleanSubtract);
-
-    Q_UNUSED(actExtrude) Q_UNUSED(actMirror) Q_UNUSED(actUnion) Q_UNUSED(actSubtract)
+    // ── Sketch drawing tools ──────────────────────────────────────────────────
+    connect(m_ribbon->btnLine,   &QToolButton::clicked,
+            this, [this]{ activateSketchTool(1); });
+    connect(m_ribbon->btnRect,   &QToolButton::clicked,
+            this, [this]{ activateSketchTool(2); });
+    connect(m_ribbon->btnCircle, &QToolButton::clicked,
+            this, [this]{ activateSketchTool(3); });
+    connect(m_ribbon->btnConstr, &QToolButton::clicked,
+            this, [this]{ activateSketchTool(4); });
+    connect(m_ribbon->btnExitSketch, &QToolButton::clicked,
+            this, &MainWindow::exitSketch);
 }
 
 // ── Docks ─────────────────────────────────────────────────────────────────────
@@ -454,9 +408,7 @@ void MainWindow::enterSketch(int planeId)
     LOG_INFO("MainWindow: entering sketch mode on plane '{}'", plane.name().toStdString());
     m_document->beginSketch(plane);  // triggers activeSketchChanged → enterSketchMode
 
-    // Show sketch tool buttons
-    for (auto* a : {m_actLine, m_actRect, m_actCircle, m_actCons, m_actExitSketch})
-        if (a) a->setVisible(true);
+    if (m_ribbon) m_ribbon->setSketchMode(true);
 
     m_statusSnap->setText(QString("Plane: %1").arg(plane.name()));
     activateSketchTool(1);  // activate Line tool by default
@@ -469,8 +421,7 @@ void MainWindow::exitSketch()
     m_viewport->setActiveTool(nullptr);
     m_document->endSketch();  // triggers activeSketchChanged(nullptr) → exitSketchMode
 
-    for (auto* a : {m_actLine, m_actRect, m_actCircle, m_actCons, m_actExitSketch})
-        if (a) a->setVisible(false);
+    if (m_ribbon) m_ribbon->setSketchMode(false);
 
     m_statusSnap->setText("Snap: Grid");
 }
@@ -493,19 +444,21 @@ void MainWindow::activateSketchTool(int toolId)
     }
 
     m_viewport->setActiveTool(m_currentTool.get());
-    updateToolActions(toolId);
+    updateSketchToolButtons(toolId);
 
     if (m_currentTool)
         m_statusMode->setText("Sketch | " + m_currentTool->statusHint());
 }
 
-void MainWindow::updateToolActions(int activeId)
+void MainWindow::updateSketchToolButtons(int activeId)
 {
-    struct { QAction* a; int id; } items[] = {
-        {m_actLine, 1}, {m_actRect, 2}, {m_actCircle, 3}, {m_actCons, 4}
+    if (!m_ribbon) return;
+    struct { QToolButton* btn; int id; } items[] = {
+        {m_ribbon->btnLine, 1}, {m_ribbon->btnRect, 2},
+        {m_ribbon->btnCircle, 3}, {m_ribbon->btnConstr, 4}
     };
     for (auto& item : items)
-        if (item.a) item.a->setChecked(item.id == activeId);
+        if (item.btn) item.btn->setChecked(item.id == activeId);
 }
 
 // ── 3D Operations ─────────────────────────────────────────────────────────────

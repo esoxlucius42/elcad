@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="6" fill="#2e2e2e"/>
+  <!-- Two overlapping rectangles, both filled solid blue (= union result) -->
+  <rect x="7"  y="16" width="22" height="16" rx="3" fill="#4a9eff"/>
+  <rect x="19" y="16" width="22" height="16" rx="3" fill="#4a9eff"/>
+  <!-- Individual shape outlines -->
+  <rect x="7"  y="16" width="22" height="16" rx="3" fill="none" stroke="#7dc5ff" stroke-width="1.5"/>
+  <rect x="19" y="16" width="22" height="16" rx="3" fill="none" stroke="#7dc5ff" stroke-width="1.5"/>
+</svg>

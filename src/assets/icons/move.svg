@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <rect width="48" height="48" rx="6" fill="#2e2e2e"/>
+  <g fill="#e0e0e0">
+    <!-- Cross shaft -->
+    <rect x="21" y="15" width="6" height="18"/>
+    <rect x="15" y="21" width="18" height="6"/>
+    <!-- Up arrowhead -->
+    <polygon points="24,8 19,16 29,16"/>
+    <!-- Down arrowhead -->
+    <polygon points="24,40 19,32 29,32"/>
+    <!-- Left arrowhead -->
+    <polygon points="8,24 16,19 16,29"/>
+    <!-- Right arrowhead -->
+    <polygon points="40,24 32,19 32,29"/>
+  </g>
+</svg>
