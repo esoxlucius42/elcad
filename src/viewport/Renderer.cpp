@@ -38,7 +38,8 @@ void Renderer::resize(int w, int h)
 
 void Renderer::render(Camera& camera, Document* doc,
                       const std::vector<SketchEntity>* sketchPreview,
-                      const QVector2D* snapPos)
+                      const QVector2D* snapPos,
+                      float devicePixelRatio)
 {
     glClearColor(0.2f, 0.2f, 0.2f, 1.0f); // #333333
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -74,9 +75,15 @@ void Renderer::render(Camera& camera, Document* doc,
         m_gizmo.setVisible(selected != nullptr);
         if (selected && !m_gizmo.isDragging()) {
             m_gizmo.setPosition((selected->bboxMin() + selected->bboxMax()) * 0.5f);
+            LOG_INFO("Renderer: selected id={} bbox_center=({:.3f},{:.3f},{:.3f}) viewH={} fov={}",
+                     selected->id(),
+                     ((selected->bboxMin()+selected->bboxMax())*0.5f).x(),
+                     ((selected->bboxMin()+selected->bboxMax())*0.5f).y(),
+                     ((selected->bboxMin()+selected->bboxMax())*0.5f).z(),
+                     m_height, camera.fov());
         }
         if (m_gizmo.visible())
-            m_gizmo.draw(view, proj, camPos, m_height, camera.fov());
+            m_gizmo.draw(view, proj, camPos, m_width, m_height, camera.fov());
     } else {
         m_gizmo.setVisible(false);
     }
