@@ -124,7 +124,10 @@ void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& pr
         m_phong.setVec3("uLightColor",  m_lightColor);
         m_phong.setVec3("uObjectColor", objColor);
         m_phong.setVec3("uViewPos",     camPos);
-        m_phong.setFloat("uAmbient",    m_ambient);
+        m_phong.setVec3("uSkyColor",    m_skyColor);
+        m_phong.setVec3("uGroundColor", m_groundColor);
+        m_phong.setVec3("uFillDir",     m_fillDir.normalized());
+        m_phong.setVec3("uFillColor",   m_fillColor);
 
         mesh->drawTriangles();
         m_phong.release();

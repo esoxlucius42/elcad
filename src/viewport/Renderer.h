@@ -64,7 +64,12 @@ private:
     // Lighting constants
     QVector3D m_lightDir{0.6f, 1.0f, 0.8f};
     QVector3D m_lightColor{1.0f, 1.0f, 1.0f};
-    float     m_ambient{0.15f};
+    // Hemisphere ambient
+    QVector3D m_skyColor{0.55f, 0.65f, 0.80f};
+    QVector3D m_groundColor{0.40f, 0.35f, 0.28f};
+    // Fill/back light (diffuse only, negative Y so it also lights bottom faces)
+    QVector3D m_fillDir{-0.5f, -0.3f, -0.6f};
+    QVector3D m_fillColor{0.40f, 0.42f, 0.50f};
 };
 
 } // namespace elcad
