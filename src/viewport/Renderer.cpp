@@ -459,6 +459,10 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
     outHit = {};
     if (!doc) return false;
 
+    // Diagnostic: log incoming ray
+    LOG_DEBUG("pickHit: rayOrigin=({:.3f},{:.3f},{:.3f}) rayDir=({:.6f},{:.6f},{:.6f})",
+              rayOrigin.x(), rayOrigin.y(), rayOrigin.z(), rayDir.x(), rayDir.y(), rayDir.z());
+
     Body* closest = nullptr;
     float minT    = std::numeric_limits<float>::max();
     int   bestTri = -1;
