@@ -28,6 +28,10 @@ void Renderer::initialize()
     glGenVertexArrays(1, &m_highlightVao);
     glGenBuffers(1, &m_highlightVbo);
 
+    // Face highlight buffers
+    glGenVertexArrays(1, &m_faceHighlightVao);
+    glGenBuffers(1, &m_faceHighlightVbo);
+
     m_initialized = true;
     LOG_INFO("Renderer initialised — phong shader valid={}, edge shader valid={}",
              m_phong.isValid(), m_edge.isValid());
@@ -200,26 +204,54 @@ void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& pr
             }
         }
 
-        // Draw centroids as points
+        // Draw filled face highlights (preferred) -- collect tri vertices and draw as translucent yellow
         if (!triCentroids.empty()) {
-            m_edge.bind();
-            m_edge.setMat4("uModel", model);
-            m_edge.setMat4("uView", view);
-            m_edge.setMat4("uProjection", proj);
-            m_edge.setVec3("uColor", QVector3D(1.0f, 0.7f, 0.0f));
+            std::vector<QVector3D> fillVerts;
+            fillVerts.reserve(triCentroids.size() * 3);
+            // Instead of using centroids we will draw full triangles stored in selItems
+            const auto& pv = mesh->pickVertices();
+            const auto& pi = mesh->pickIndices();
+            for (const auto& s : selItems) {
+                if (s.bodyId != body->id()) continue;
+                if (s.type == Document::SelectedItem::Type::Face) {
+                    int tri = s.index;
+                    size_t base = static_cast<size_t>(tri) * 3;
+                    if (base + 2 < pi.size()) {
+                        fillVerts.push_back(pv[pi[base+0]]);
+                        fillVerts.push_back(pv[pi[base+1]]);
+                        fillVerts.push_back(pv[pi[base+2]]);
+                    }
+                }
+            }
 
-            glBindVertexArray(m_highlightVao);
-            glBindBuffer(GL_ARRAY_BUFFER, m_highlightVbo);
-            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(triCentroids.size() * sizeof(QVector3D)),
-                         triCentroids.data(), GL_DYNAMIC_DRAW);
-            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-            glEnableVertexAttribArray(0);
-            glPointSize(8.0f);
-            glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(triCentroids.size()));
-            glDisableVertexAttribArray(0);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
-            glBindVertexArray(0);
-            m_edge.release();
+            if (!fillVerts.empty()) {
+                // Use simple blend and polygon offset to avoid z-fighting
+                glEnable(GL_POLYGON_OFFSET_FILL);
+                glPolygonOffset(-1.f, -1.f);
+                m_edge.bind();
+                m_edge.setMat4("uModel", model);
+                m_edge.setMat4("uView", view);
+                m_edge.setMat4("uProjection", proj);
+                m_edge.setVec3("uColor", QVector3D(1.0f, 0.7f, 0.0f));
+
+                glBindVertexArray(m_faceHighlightVao);
+                glBindBuffer(GL_ARRAY_BUFFER, m_faceHighlightVbo);
+                glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(fillVerts.size() * sizeof(QVector3D)),
+                             fillVerts.data(), GL_DYNAMIC_DRAW);
+                glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+                glEnableVertexAttribArray(0);
+
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+                glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(fillVerts.size()));
+                glDisable(GL_BLEND);
+
+                glDisableVertexAttribArray(0);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                glBindVertexArray(0);
+                m_edge.release();
+                glDisable(GL_POLYGON_OFFSET_FILL);
+            }
         }
 
         // Draw vertex points

@@ -74,6 +74,9 @@ private:
     // One-time GL buffers for highlights to avoid realloc each frame
     GLuint m_highlightVao{0};
     GLuint m_highlightVbo{0};
+    // VBO for filled face highlights (positions only)
+    GLuint m_faceHighlightVao{0};
+    GLuint m_faceHighlightVbo{0};
 
     // Lighting constants
     QVector3D m_lightDir{0.6f, 1.0f, 0.8f};
