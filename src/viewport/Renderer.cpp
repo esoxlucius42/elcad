@@ -523,8 +523,17 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
                     centroid = (pv[pi[base+0]] + pv[pi[base+1]] + pv[pi[base+2]]) / 3.0f;
                 }
                 int faceOrd = mesh->faceOrdinalForTriangle(triIdx);
-                LOG_DEBUG("Ray pick: tri hit body id={} tri={} t={:.4f} u={:.4f} v={:.4f} centroid=({:.3f},{:.3f},{:.3f}) faceOrd={}",
-                          body->id(), triIdx, t, u, v, centroid.x(), centroid.y(), centroid.z(), faceOrd);
+                // Detailed pick debug: report ray, hit point, triangle normal and facing
+                QVector3D hitPoint = rayOrigin + rayDir * t;
+                MeshBuffer* dbgMesh = mesh;
+                QVector3D triNormal = dbgMesh->triangleNormal(triIdx);
+                float ndot = QVector3D::dotProduct(triNormal, rayDir);
+                LOG_DEBUG("Ray pick: tri hit body id={} tri={} t={:.4f} u={:.4f} v={:.4f} centroid=({:.3f},{:.3f},{:.3f}) faceOrd={} hitPoint=({:.3f},{:.3f},{:.3f}) rayOrigin=({:.3f},{:.3f},{:.3f}) rayDir=({:.6f},{:.6f},{:.6f}) triNormal=({:.6f},{:.6f},{:.6f}) ndot={:.6f}",
+                          body->id(), triIdx, t, u, v, centroid.x(), centroid.y(), centroid.z(), faceOrd,
+                          hitPoint.x(), hitPoint.y(), hitPoint.z(),
+                          rayOrigin.x(), rayOrigin.y(), rayOrigin.z(),
+                          rayDir.x(), rayDir.y(), rayDir.z(),
+                          triNormal.x(), triNormal.y(), triNormal.z(), ndot);
 
                 minT = t;
                 closest = body;
