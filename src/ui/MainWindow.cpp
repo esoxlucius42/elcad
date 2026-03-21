@@ -530,16 +530,45 @@ void MainWindow::onExtrude()
             return;
         }
 
-        // Extract the TopoDS_Face corresponding to the ordinal
+        // Extract the TopoDS_Face corresponding to the ordinal (if available)
         TopoDS_Face occtFace;
-        int idx = 0;
-        for (TopExp_Explorer exp(faceBody->shape(), TopAbs_FACE); exp.More(); exp.Next(), ++idx) {
-            if (idx == faceOrd) { occtFace = TopoDS::Face(exp.Current()); break; }
+        if (faceOrd >= 0) {
+            int idx = 0;
+            for (TopExp_Explorer exp(faceBody->shape(), TopAbs_FACE); exp.More(); exp.Next(), ++idx) {
+                if (idx == faceOrd) { occtFace = TopoDS::Face(exp.Current()); break; }
+            }
         }
+
         if (occtFace.IsNull()) {
-            LOG_ERROR("Extrude: extracted OCCT face is null");
-            QMessageBox::critical(this, "Extrude Failed", "Could not extract OCCT face for extrusion.");
-            return;
+            LOG_DEBUG("Extrude: face extraction failed (faceOrd={} tri={}) — attempting mesh fallback", faceOrd, faceTriIndex);
+
+            // Gather triangle set: prefer explicit document selection if it contains face triangles
+            std::vector<int> tris;
+            for (const auto& s : m_document->selectionItems()) {
+                if (s.type == Document::SelectedItem::Type::Face && s.bodyId == faceBody->id())
+                    tris.push_back(s.index);
+            }
+            if (tris.empty()) {
+                tris = m_viewport->renderer().expandFaceSelection(faceBody, faceTriIndex, 10.0f, 1e-3f);
+            }
+
+            LOG_DEBUG("Extrude fallback: attempting to build face from {} triangles", tris.size());
+            if (!tris.empty()) {
+                TopoDS_Face constructed = m_viewport->renderer().buildFaceFromTriangles(faceBody, tris);
+                if (!constructed.IsNull()) {
+                    occtFace = constructed;
+                    LOG_INFO("Extrude: fallback constructed face from {} triangles", tris.size());
+                } else {
+                    LOG_ERROR("Extrude: fallback face construction failed");
+                }
+            } else {
+                LOG_ERROR("Extrude: no triangles available for fallback");
+            }
+
+            if (occtFace.IsNull()) {
+                QMessageBox::critical(this, "Extrude Failed", "Could not determine or construct a face for extrusion.");
+                return;
+            }
         }
 
         res = ExtrudeOperation::extrudeFace(occtFace, params);

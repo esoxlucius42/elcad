@@ -5,6 +5,14 @@
 #include "sketch/Sketch.h"
 #include <QMatrix3x3>
 
+#ifdef ELCAD_HAVE_OCCT
+#include <BRepBuilderAPI_MakePolygon.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <TopoDS.hxx>
+#include <gp_Pnt.hxx>
+#endif
+
 namespace elcad {
 
 void Renderer::initialize()
@@ -622,6 +630,110 @@ std::vector<int> Renderer::expandFaceSelection(Body* body, int startTri, float a
     return result;
 #endif
 }
+
+#ifdef ELCAD_HAVE_OCCT
+// Build a TopoDS_Face from a set of mesh triangle indices. This constructs the boundary loop(s)
+// from the triangles and builds a polygonal wire/face. Returns a null face on failure.
+TopoDS_Face Renderer::buildFaceFromTriangles(Body* body, const std::vector<int>& triIndices)
+{
+    TopoDS_Face nullFace;
+    if (!body || triIndices.empty()) return nullFace;
+
+    MeshBuffer* mesh = getMeshBuffer(body);
+    if (!mesh || mesh->isEmpty()) return nullFace;
+
+    const auto& pv = mesh->pickVertices();
+    const auto& pi = mesh->pickIndices();
+
+    // Build edge map counting usages within the tri set
+    struct EdgeKey { unsigned int a,b; };
+    struct EdgeHash { size_t operator()(EdgeKey const& k) const noexcept { return (static_cast<size_t>(k.a) << 32) ^ static_cast<size_t>(k.b); } };
+    struct EdgeEq { bool operator()(EdgeKey const& x, EdgeKey const& y) const noexcept { return x.a==y.a && x.b==y.b; } };
+
+    std::unordered_map<EdgeKey, int, EdgeHash, EdgeEq> edgeCount;
+    edgeCount.reserve(triIndices.size()*3);
+
+    for (int tri : triIndices) {
+        size_t base = static_cast<size_t>(tri) * 3;
+        if (base + 2 >= pi.size()) continue;
+        unsigned int i0 = pi[base+0];
+        unsigned int i1 = pi[base+1];
+        unsigned int i2 = pi[base+2];
+        std::array<std::pair<unsigned int,unsigned int>,3> edges = {{{i0,i1},{i1,i2},{i2,i0}}};
+        for (auto e : edges) {
+            unsigned int a = std::min(e.first, e.second);
+            unsigned int b = std::max(e.first, e.second);
+            EdgeKey k{a,b};
+            edgeCount[k] = edgeCount[k] + 1;
+        }
+    }
+
+    // Border edges are those with count == 1
+    std::vector<std::pair<unsigned int,unsigned int>> borderEdges;
+    for (const auto& kv : edgeCount) {
+        if (kv.second == 1) borderEdges.push_back({kv.first.a, kv.first.b});
+    }
+
+    if (borderEdges.empty()) {
+        LOG_ERROR("buildFaceFromTriangles: no border edges (maybe selection is closed manifold)");
+        return nullFace;
+    }
+
+    // Build adjacency for border loop ordering
+    std::unordered_map<unsigned int, std::vector<unsigned int>> adj;
+    for (auto e : borderEdges) {
+        adj[e.first].push_back(e.second);
+        adj[e.second].push_back(e.first);
+    }
+
+    // Find a start vertex (degree==1 preferred)
+    unsigned int startV = borderEdges[0].first;
+    for (const auto& kv : adj) { if (kv.second.size() == 1) { startV = kv.first; break; } }
+
+    // Walk loop(s) — only handle first outer loop
+    std::vector<unsigned int> loop;
+    loop.push_back(startV);
+    unsigned int cur = startV;
+    unsigned int prev = std::numeric_limits<unsigned int>::max();
+    while (true) {
+        const auto& nbrs = adj[cur];
+        unsigned int next = std::numeric_limits<unsigned int>::max();
+        for (unsigned int n : nbrs) if (n != prev) { next = n; break; }
+        if (next == std::numeric_limits<unsigned int>::max()) break;
+        if (next == startV) break;
+        loop.push_back(next);
+        prev = cur; cur = next;
+        if (loop.size() > borderEdges.size()+2) break; // avoid infinite loops
+    }
+
+    if (loop.size() < 3) {
+        LOG_ERROR("buildFaceFromTriangles: extracted loop too small: {}", loop.size());
+        return nullFace;
+    }
+
+    // Build OCCT polygon wire
+    BRepBuilderAPI_MakePolygon poly;
+    for (unsigned int vi : loop) {
+        const QVector3D& p = pv[vi];
+        poly.Add(gp_Pnt(p.x(), p.y(), p.z()));
+    }
+    poly.Close();
+    if (!poly.IsDone()) {
+        LOG_ERROR("buildFaceFromTriangles: polygon construction failed");
+        return nullFace;
+    }
+
+    BRepBuilderAPI_MakeFace faceMaker(poly.Wire());
+    if (!faceMaker.IsDone()) {
+        LOG_ERROR("buildFaceFromTriangles: MakeFace failed");
+        return nullFace;
+    }
+
+    TopoDS_Face f = TopoDS::Face(faceMaker.Face());
+    LOG_DEBUG("buildFaceFromTriangles: built face with loop size {} triCount={}", loop.size(), triIndices.size());
+    return f;
+}
+#endif
 
 } // namespace elcad
 

@@ -10,6 +10,10 @@
 #include <unordered_map>
 #include <memory>
 
+#ifdef ELCAD_HAVE_OCCT
+#include <TopoDS_Face.hxx>
+#endif
+
 namespace elcad {
 
 class Document;
@@ -45,6 +49,10 @@ public:
     // Expand a clicked triangle into a connected coplanar set. Returns triangle indices.
     std::vector<int> expandFaceSelection(Body* body, int startTri, float angleDeg = 10.0f, float distanceTol = 1e-3f);
 
+#ifdef ELCAD_HAVE_OCCT
+    // Build a TopoDS_Face from a set of mesh triangle indices. Returns a null face on failure.
+    TopoDS_Face buildFaceFromTriangles(Body* body, const std::vector<int>& triIndices);
+#endif
 
     bool gridVisible() const     { return m_gridVisible; }
     void setGridVisible(bool on) { m_gridVisible = on; }
