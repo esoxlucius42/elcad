@@ -476,12 +476,22 @@ void MainWindow::onExtrude()
     int  faceTriIndex = -1;
 
     if (!sketch) {
-        // If no sketch, check if the user has selected exactly one face
+        // If no sketch, check if the user has selected one or more faces (possibly expanded into multiple
+        // triangle selections). Accept a selection set consisting solely of faces on the same body.
         auto sel = m_document->selectionItems();
-        if (sel.size() == 1 && sel[0].type == Document::SelectedItem::Type::Face) {
+        int faceCount = 0;
+        quint64 commonBody = 0;
+        int representativeTri = -1;
+        for (const auto& s : sel) {
+            if (s.type != Document::SelectedItem::Type::Face) { faceCount = -100; break; }
+            if (faceCount == 0) { commonBody = s.bodyId; representativeTri = s.index; }
+            else if (s.bodyId != commonBody) { faceCount = -100; break; }
+            ++faceCount;
+        }
+        if (faceCount > 0) {
             faceExtrude = true;
-            faceBody = m_document->bodyById(sel[0].bodyId);
-            faceTriIndex = sel[0].index;
+            faceBody = m_document->bodyById(commonBody);
+            faceTriIndex = representativeTri;
         } else {
             // Try last completed sketch as before
             if (m_document->sketches().empty()) {
