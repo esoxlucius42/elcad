@@ -313,25 +313,59 @@ MeshBuffer* Renderer::getMeshBuffer(Body* body)
     if (it == m_meshCache.end() || body->meshDirty()) {
         LOG_DEBUG("Tessellating body id={} name='{}' — building GPU mesh",
                   id, body->name().toStdString());
-        auto buf = std::make_unique<MeshBuffer>();
-        buf->build(body->shape());
-        body->setMeshDirty(false);
-        body->setBbox(buf->bboxMin(), buf->bboxMax());
-        body->setTriangleCount(buf->triangleCount() / 3);
 
-        int triCount = buf->triangleCount() / 3;
+        // Adaptive tessellation: start with default deflection and increase (coarsen)
+        // if triangle count is excessively large. This avoids OOM/slow selection on very
+        // fine tessellations (e.g., spheres created with small deflection).
+        const int kMaxTriangles = 30000; // safe upper bound for triangle count
+        const int kMaxAttempts = 6;
+        float deflection = 0.01f; // starting chord deflection (mm)
+        int triCount = 0;
+        std::unique_ptr<MeshBuffer> finalBuf;
+
+        for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+            auto buf = std::make_unique<MeshBuffer>();
+            buf->build(body->shape(), deflection);
+            triCount = buf->triangleCount() / 3;
+
+            LOG_DEBUG("Tessellated attempt {}: deflection={} -> triangles={}", attempt, deflection, triCount);
+
+            // Acceptable triangle count
+            if (triCount <= kMaxTriangles) {
+                finalBuf = std::move(buf);
+                break;
+            }
+
+            // Keep the last built mesh as a fallback if all attempts fail
+            finalBuf = std::move(buf);
+            LOG_INFO("Body id={} name='{}' produced {} triangles (> {}), increasing deflection",
+                     id, body->name().toStdString(), triCount, kMaxTriangles);
+            deflection *= 2.0f; // coarsen mesh
+        }
+
+        if (!finalBuf) {
+            // Fallback: build once with larger deflection
+            finalBuf = std::make_unique<MeshBuffer>();
+            finalBuf->build(body->shape(), deflection);
+            triCount = finalBuf->triangleCount() / 3;
+        }
+
+        body->setMeshDirty(false);
+        body->setBbox(finalBuf->bboxMin(), finalBuf->bboxMax());
+        body->setTriangleCount(finalBuf->triangleCount() / 3);
+
         LOG_DEBUG("Tessellation done — body id={} name='{}' triangles={} "
                   "bbox=({:.2f},{:.2f},{:.2f})-({:.2f},{:.2f},{:.2f})",
                   id, body->name().toStdString(), triCount,
-                  buf->bboxMin().x(), buf->bboxMin().y(), buf->bboxMin().z(),
-                  buf->bboxMax().x(), buf->bboxMax().y(), buf->bboxMax().z());
+                  finalBuf->bboxMin().x(), finalBuf->bboxMin().y(), finalBuf->bboxMin().z(),
+                  finalBuf->bboxMax().x(), finalBuf->bboxMax().y(), finalBuf->bboxMax().z());
 
         if (triCount == 0)
             LOG_WARN("Body id={} name='{}' produced zero triangles — shape may be empty or degenerate",
                      id, body->name().toStdString());
 
-        MeshBuffer* ptr = buf.get();
-        m_meshCache[id] = std::move(buf);
+        MeshBuffer* ptr = finalBuf.get();
+        m_meshCache[id] = std::move(finalBuf);
         return ptr;
     }
     return it->second.get();
@@ -361,6 +395,26 @@ Body* Renderer::pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Do
     Body* closest = nullptr;
     float minT    = std::numeric_limits<float>::max();
 
+    // If a mesh is excessively large, skip per-triangle intersection and fall back
+    // to a fast AABB test to avoid long stalls or crashes during selection.
+    const int kSelectionTriangleLimit = 20000; // triangles
+
+    auto rayAabb = [](const QVector3D& o, const QVector3D& d,
+                      const QVector3D& bmin, const QVector3D& bmax, float& tMin) -> bool {
+        float tmax = std::numeric_limits<float>::max();
+        tMin = -std::numeric_limits<float>::max();
+        for (int i = 0; i < 3; ++i) {
+            float inv = (d[i] != 0.f) ? 1.f / d[i] : std::numeric_limits<float>::max();
+            float t1 = (bmin[i] - o[i]) * inv;
+            float t2 = (bmax[i] - o[i]) * inv;
+            if (t1 > t2) std::swap(t1, t2);
+            tMin = std::max(tMin, t1);
+            tmax = std::min(tmax, t2);
+            if (tmax < tMin) return false;
+        }
+        return tmax > 0.f;
+    };
+
     for (auto& bodyPtr : doc->bodies()) {
         Body* body = bodyPtr.get();
         if (!body->visible()) continue;
@@ -369,7 +423,20 @@ Body* Renderer::pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Do
         if (!mesh || mesh->isEmpty()) continue;
 
         float t;
-        if (mesh->rayIntersect(rayOrigin, rayDir, t) && t < minT) {
+        bool hit = false;
+        int triCount = mesh->triangleCount() / 3;
+        if (triCount > kSelectionTriangleLimit && body->hasBbox()) {
+            // Fast bbox test
+            float tAabb;
+            if (rayAabb(rayOrigin, rayDir, body->bboxMin(), body->bboxMax(), tAabb)) {
+                t = tAabb;
+                hit = true;
+            }
+        } else {
+            if (mesh->rayIntersect(rayOrigin, rayDir, t)) hit = true;
+        }
+
+        if (hit && t < minT) {
             minT    = t;
             closest = body;
         }
@@ -399,6 +466,24 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
     int   bestTri = -1;
     float bestU = 0.f, bestV = 0.f;
 
+    const int kSelectionTriangleLimit = 20000; // triangles
+
+    auto rayAabb = [](const QVector3D& o, const QVector3D& d,
+                      const QVector3D& bmin, const QVector3D& bmax, float& tMin) -> bool {
+        float tmax = std::numeric_limits<float>::max();
+        tMin = -std::numeric_limits<float>::max();
+        for (int i = 0; i < 3; ++i) {
+            float inv = (d[i] != 0.f) ? 1.f / d[i] : std::numeric_limits<float>::max();
+            float t1 = (bmin[i] - o[i]) * inv;
+            float t2 = (bmax[i] - o[i]) * inv;
+            if (t1 > t2) std::swap(t1, t2);
+            tMin = std::max(tMin, t1);
+            tmax = std::min(tmax, t2);
+            if (tmax < tMin) return false;
+        }
+        return tmax > 0.f;
+    };
+
     for (auto& bodyPtr : doc->bodies()) {
         Body* body = bodyPtr.get();
         if (!body->visible()) continue;
@@ -407,11 +492,24 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
         if (!mesh || mesh->isEmpty()) continue;
 
         float t; int triIdx; float u,v;
-        if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v) && t < minT) {
-            minT = t;
-            closest = body;
-            bestTri = triIdx;
-            bestU = u; bestV = v;
+        int triCount = mesh->triangleCount() / 3;
+        if (triCount > kSelectionTriangleLimit && body->hasBbox()) {
+            // coarse bbox-based pick; return body-level hit only
+            float tAabb;
+            if (rayAabb(rayOrigin, rayDir, body->bboxMin(), body->bboxMax(), tAabb)) {
+                if (tAabb < minT) {
+                    minT = tAabb;
+                    closest = body;
+                    bestTri = -1;
+                }
+            }
+        } else {
+            if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v) && t < minT) {
+                minT = t;
+                closest = body;
+                bestTri = triIdx;
+                bestU = u; bestV = v;
+            }
         }
     }
 
@@ -441,6 +539,8 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
             item.type = Document::SelectedItem::Type::Face;
             item.index = bestTri;
         }
+    } else {
+        // bestTri < 0 means we only detected a bbox-level hit for a large mesh; leave as Body
     }
 
     outHit = item;

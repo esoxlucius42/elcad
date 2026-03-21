@@ -199,3 +199,28 @@ target_compile_options(elcad PRIVATE
 
 # ── Install ───────────────────────────────────────────────────────────────────
 install(TARGETS elcad DESTINATION bin)
+
+# Simple command-line tool to measure tessellation triangle counts for a sphere
+add_executable(sphere_tess_count tools/sphere_tess_count.cpp)
+target_include_directories(sphere_tess_count PRIVATE src)
+
+if(ELCAD_HAVE_OCCT AND NOT ELCAD_OCCT_FIRST_BUILD)
+    target_link_libraries(sphere_tess_count PRIVATE
+        TKernel TKMath TKBRep TKPrim TKTopAlgo TKMesh
+        TKG3d TKGeomBase TKGeomAlgo TKBO TKBool TKShHealing
+        TKFeat TKFillet TKOffset
+        TKDESTEP TKXSBase TKXCAF TKLCAF TKDE TKDECascade TKCDF TKCAF
+    )
+    target_compile_definitions(sphere_tess_count PRIVATE ELCAD_HAVE_OCCT)
+elseif(ELCAD_OCCT_FIRST_BUILD)
+    target_include_directories(sphere_tess_count PRIVATE ${ELCAD_OCCT_STUB_INCLUDES})
+    target_link_libraries(sphere_tess_count PRIVATE
+        TKernel TKMath TKBRep TKPrim TKTopAlgo TKMesh
+        TKG3d TKGeomBase TKGeomAlgo TKBO TKBool TKShHealing
+        TKFeat TKFillet TKOffset
+        TKDESTEP TKXSBase TKXCAF TKLCAF TKDE TKDECascade TKCDF TKCAF
+    )
+    target_compile_definitions(sphere_tess_count PRIVATE ELCAD_HAVE_OCCT)
+else()
+    message(WARNING "sphere_tess_count requires OpenCASCADE — target will be empty")
+endif()
