@@ -475,24 +475,45 @@ bool MeshBuffer::rayIntersectDetailed(const QVector3D& origin, const QVector3D& 
         }
     }
 
-    // Prefer front-facing hit if available
-    if (minFrontTri != -1) {
-        outTriIndex = minFrontTri;
-        outT = minFrontT;
-        outU = frontU;
-        outV = frontV;
-        return true;
-    }
+    // Runtime toggle: prefer front-facing hits only when environment variable
+    // ELCAD_PICK_PREFER_FACING is set. By default prefer the closest hit to
+    // preserve previous behavior for meshes with inconsistent normals.
+    const char* preferEnv = std::getenv("ELCAD_PICK_PREFER_FACING");
+    bool preferFacing = (preferEnv != nullptr);
 
-    if (minAnyTri != -1) {
-        outTriIndex = minAnyTri;
-        outT = minAnyT;
-        outU = anyU;
-        outV = anyV;
-        return true;
+    if (preferFacing) {
+        if (minFrontTri != -1) {
+            outTriIndex = minFrontTri;
+            outT = minFrontT;
+            outU = frontU;
+            outV = frontV;
+            return true;
+        }
+        if (minAnyTri != -1) {
+            outTriIndex = minAnyTri;
+            outT = minAnyT;
+            outU = anyU;
+            outV = anyV;
+            return true;
+        }
+        return false;
+    } else {
+        if (minAnyTri != -1) {
+            outTriIndex = minAnyTri;
+            outT = minAnyT;
+            outU = anyU;
+            outV = anyV;
+            return true;
+        }
+        if (minFrontTri != -1) {
+            outTriIndex = minFrontTri;
+            outT = minFrontT;
+            outU = frontU;
+            outV = frontV;
+            return true;
+        }
+        return false;
     }
-
-    return false;
 }
 
 bool MeshBuffer::rayIntersect(const QVector3D& origin, const QVector3D& dir, float& outT) const
