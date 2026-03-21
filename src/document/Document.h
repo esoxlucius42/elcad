@@ -30,7 +30,24 @@ public:
     const std::vector<std::unique_ptr<Body>>& bodies() const { return m_bodies; }
 
     // Selection helpers
+    struct SelectedItem {
+        enum class Type { Body, Face, Edge, Vertex };
+        Type    type{Type::Body};
+        quint64 bodyId{0};   // owning body
+        int     index{-1};   // face/edge/vertex index within body (or -1 for body)
+
+        bool operator==(SelectedItem const& o) const noexcept {
+            return type == o.type && bodyId == o.bodyId && index == o.index;
+        }
+    };
+
     void   clearSelection();
+    void   addSelection(const SelectedItem& it);
+    void   removeSelection(const SelectedItem& it);
+    void   toggleSelection(const SelectedItem& it);
+    bool   isSelected(const SelectedItem& it) const;
+    std::vector<SelectedItem> selectionItems() const;
+
     Body*  singleSelectedBody() const;
 
     // Undo / redo
@@ -55,6 +72,9 @@ private:
     std::unique_ptr<UndoStack>           m_undoStack;
     std::unique_ptr<Sketch>              m_activeSketch;
     std::vector<std::unique_ptr<Sketch>> m_sketches;
+
+    // Current selection (mixed types allowed)
+    std::vector<SelectedItem>            m_selection;
 };
 
 } // namespace elcad

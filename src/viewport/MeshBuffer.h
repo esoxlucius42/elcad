@@ -42,6 +42,20 @@ public:
     // Ray-mesh intersection (Möller-Trumbore). Returns true and sets t to hit distance.
     bool rayIntersect(const QVector3D& origin, const QVector3D& dir, float& t) const;
 
+    // Detailed intersection that also returns triangle index and barycentric coords (u,v)
+    bool rayIntersectDetailed(const QVector3D& origin, const QVector3D& dir,
+                              float& outT, int& outTriIndex, float& outU, float& outV) const;
+
+    // Accessors for CPU-side pick data (used for drawing per-triangle/vertex highlights)
+    const std::vector<QVector3D>& pickVertices() const { return m_pickVerts; }
+    const std::vector<unsigned int>& pickIndices() const { return m_pickIndices; }
+
+    // Adjacency: triangle -> neighbor triangle indices
+    // Each entry is a vector of triangle indices that share an edge with the triangle.
+    const std::vector<std::vector<int>>& triangleNeighbors() const { return m_triNeighbors; }
+    void ensureAdjacencyComputed();
+    QVector3D triangleNormal(int triIdx) const; // unit normal computed from pickVerts/pickIndices
+
 private:
     void upload(const std::vector<Vertex>& verts,
                 const std::vector<unsigned int>& triIndices,
@@ -59,6 +73,9 @@ private:
     // CPU-side data for ray picking
     std::vector<QVector3D>    m_pickVerts;
     std::vector<unsigned int> m_pickIndices;
+
+    // Cached triangle adjacency (triangle index -> neighbor triangle indices)
+    std::vector<std::vector<int>> m_triNeighbors;
 
     bool m_initialized{false};
 };

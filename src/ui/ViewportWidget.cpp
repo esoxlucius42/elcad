@@ -164,7 +164,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
             QVector3D ro, rd;
             m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
             GizmoHandle handle = m_renderer.gizmo().pick(ro, rd, m_camera.position(),
-                                                          height(), m_camera.fov());
+                                                          width(), height(), m_camera.fov());
             if (handle != GizmoHandle::None) {
                 m_dragMode = DragMode::GizmoDrag;
                 // Snapshot the selected body for undo on drag end
@@ -179,7 +179,7 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
                     m_gizmoDragStartShape = m_gizmoDragBody->shape();
 #endif
                 m_renderer.gizmo().beginDrag(handle, ro, rd,
-                                              m_camera.position(), height(), m_camera.fov());
+                                              m_camera.position(), width(), height(), m_camera.fov());
                 update();
                 return;
             }
@@ -244,7 +244,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
         QVector3D ro, rd;
         m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
         Gizmo::DragDelta delta = m_renderer.gizmo().updateDrag(ro, rd,
-                                    m_camera.position(), height(), m_camera.fov());
+                                    m_camera.position(), width(), height(), m_camera.fov());
 #ifdef ELCAD_HAVE_OCCT
         if (m_gizmoDragBody->hasShape()) {
             Gizmo& g = m_renderer.gizmo();
@@ -291,7 +291,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
         QVector3D ro, rd;
         m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
         if (m_renderer.gizmo().updateHover(ro, rd, m_camera.position(),
-                                            height(), m_camera.fov()))
+                                            width(), height(), m_camera.fov()))
             update();
     }
 
@@ -362,19 +362,46 @@ void ViewportWidget::handlePickClick(QPoint pos, bool addToSelection)
     QVector3D ro, rd;
     m_camera.unprojectRay(pos.x(), pos.y(), width(), height(), ro, rd);
 
-    Body* hit = m_renderer.pickBody(ro, rd, m_document);
+    Document::SelectedItem hitItem;
+    bool hit = m_renderer.pickHit(ro, rd, m_document, hitItem);
 
-    if (!addToSelection)
+    if (!hit) {
         m_document->clearSelection();
-
-    if (hit) {
-        if (addToSelection && hit->selected())
-            hit->setSelected(false);
-        else
-            hit->setSelected(true);
+        update();
+        return;
     }
 
-    emit m_document->selectionChanged();
+    // If the hit is a face, expand to connected coplanar triangles
+    if (hitItem.type == Document::SelectedItem::Type::Face) {
+        Body* b = m_document->bodyById(hitItem.bodyId);
+        if (b) {
+            // Use renderer to expand selection
+            float angleDeg = 2.0f; // TODO: make configurable
+            float distanceTol = 1e-3f;
+            auto tris = m_renderer.expandFaceSelection(b, hitItem.index, angleDeg, distanceTol);
+
+            if (!addToSelection)
+                m_document->clearSelection();
+
+            for (int t : tris) {
+                Document::SelectedItem it;
+                it.bodyId = hitItem.bodyId;
+                it.type = Document::SelectedItem::Type::Face;
+                it.index = t;
+                m_document->addSelection(it);
+            }
+
+            update();
+            return;
+        }
+    }
+
+    if (addToSelection) m_document->toggleSelection(hitItem);
+    else {
+        m_document->clearSelection();
+        m_document->addSelection(hitItem);
+    }
+
     update();
 }
 
@@ -469,7 +496,13 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
             emit requestExitSketch();
         } else if (m_document) {
             m_document->clearSelection();
-            emit m_document->selectionChanged();
+            // Document::clearSelection already emits selectionChanged
+            update();
+        }
+        break;
+    case Qt::Key_Space:
+        if (!m_sketch && m_document) {
+            m_document->clearSelection();
             update();
         }
         break;

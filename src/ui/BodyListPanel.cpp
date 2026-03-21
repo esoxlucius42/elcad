@@ -20,10 +20,21 @@ BodyListPanel::BodyListPanel(QWidget* parent)
     m_tree->header()->setStretchLastSection(true);
     layout->addWidget(m_tree);
 
+    // Selected items list below bodies
+    m_selectedLabel = new QLabel("Selection", this);
+    m_selectedLabel->setStyleSheet("font-weight: bold; padding-top: 6px;");
+    layout->addWidget(m_selectedLabel);
+
+    m_selectedList = new QListWidget(this);
+    m_selectedList->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_selectedList->setFixedHeight(120);
+    layout->addWidget(m_selectedList);
+
     connect(m_tree, &QTreeWidget::itemChanged,
             this,   &BodyListPanel::onItemChanged);
     connect(m_tree, &QTreeWidget::itemSelectionChanged,
             this,   &BodyListPanel::onSelectionChanged);
+    // No action on selected-list clicks for now
 }
 
 void BodyListPanel::setDocument(Document* doc)
@@ -89,9 +100,15 @@ void BodyListPanel::onSelectionChanged()
     m_doc->clearSelection();
     for (auto* item : m_tree->selectedItems()) {
         quint64 id = item->data(0, Qt::UserRole).toULongLong();
-        if (Body* b = m_doc->bodyById(id))
-            b->setSelected(true);
+        if (Body* b = m_doc->bodyById(id)) {
+            Document::SelectedItem it;
+            it.type = Document::SelectedItem::Type::Body;
+            it.bodyId = id;
+            it.index = -1;
+            m_doc->addSelection(it);
+        }
     }
+    // Document::addSelection already emits selectionChanged per add; but avoid duplicate heavy updates — emit once
     emit m_doc->selectionChanged();
     m_updating = false;
 }
@@ -111,12 +128,33 @@ void BodyListPanel::onDocumentSelectionChanged()
     if (m_updating || !m_doc) return;
     m_updating = true;
 
-    // Sync tree items to body selected state (set externally via viewport pick)
+    // Sync tree items to document selectionItems (supports mixed-type selection)
     m_tree->clearSelection();
-    for (auto& bodyPtr : m_doc->bodies()) {
-        if (bodyPtr->selected()) {
-            if (auto* item = itemForBody(bodyPtr->id()))
+    m_selectedList->clear();
+
+    auto sel = m_doc->selectionItems();
+    for (const auto& s : sel) {
+        if (s.type == Document::SelectedItem::Type::Body) {
+            if (auto* item = itemForBody(s.bodyId))
                 item->setSelected(true);
+            if (Body* b = m_doc->bodyById(s.bodyId))
+                m_selectedList->addItem(QString("Body: %1 (id=%2)").arg(b->name()).arg(s.bodyId));
+        } else if (s.type == Document::SelectedItem::Type::Face) {
+            if (Body* b = m_doc->bodyById(s.bodyId))
+                m_selectedList->addItem(QString("Face: tri %1 on Body '%2' (id=%3)")
+                                        .arg(s.index).arg(b->name()).arg(s.bodyId));
+        } else if (s.type == Document::SelectedItem::Type::Edge) {
+            int tri = s.index / 3;
+            int local = s.index % 3;
+            if (Body* b = m_doc->bodyById(s.bodyId))
+                m_selectedList->addItem(QString("Edge: tri %1 local %2 on Body '%3' (id=%4)")
+                                        .arg(tri).arg(local).arg(b->name()).arg(s.bodyId));
+        } else if (s.type == Document::SelectedItem::Type::Vertex) {
+            int tri = s.index / 3;
+            int local = s.index % 3;
+            if (Body* b = m_doc->bodyById(s.bodyId))
+                m_selectedList->addItem(QString("Vertex: tri %1 local %2 on Body '%3' (id=%4)")
+                                        .arg(tri).arg(local).arg(b->name()).arg(s.bodyId));
         }
     }
 

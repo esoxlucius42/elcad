@@ -1,6 +1,9 @@
 #include "viewport/MeshBuffer.h"
 #include "core/Logger.h"
 #include <limits>
+#include <unordered_map>
+#include <array>
+#include <algorithm>
 
 #ifdef ELCAD_HAVE_OCCT
 #include <BRep_Builder.hxx>
@@ -172,6 +175,65 @@ void MeshBuffer::build(const TopoDS_Shape& shape, float deflection)
     for (const auto& v : verts)
         m_pickVerts.push_back(v.position);
     m_pickIndices = triIndices;
+
+    // Reset adjacency; it will be computed on-demand
+    m_triNeighbors.clear();
+}
+
+void MeshBuffer::ensureAdjacencyComputed()
+{
+    if (!m_triNeighbors.empty()) return;
+    size_t triCount = m_pickIndices.size() / 3;
+    m_triNeighbors.resize(triCount);
+
+    // Edge -> list of triangle indices that reference it
+    struct EdgeKey { unsigned int a,b; };
+    struct EdgeKeyHash { size_t operator()(EdgeKey const& k) const noexcept { return (static_cast<size_t>(k.a) << 32) ^ static_cast<size_t>(k.b); } };
+    struct EdgeKeyEq { bool operator()(EdgeKey const& x, EdgeKey const& y) const noexcept { return x.a == y.a && x.b == y.b; } };
+
+    std::unordered_map<EdgeKey, std::vector<int>, EdgeKeyHash, EdgeKeyEq> edgeMap;
+    edgeMap.reserve(triCount * 3);
+
+    for (int tri = 0; tri < static_cast<int>(triCount); ++tri) {
+        unsigned int i0 = m_pickIndices[tri * 3 + 0];
+        unsigned int i1 = m_pickIndices[tri * 3 + 1];
+        unsigned int i2 = m_pickIndices[tri * 3 + 2];
+        std::array<std::pair<unsigned int,unsigned int>,3> edges = {{{i0,i1},{i1,i2},{i2,i0}}};
+        for (auto e : edges) {
+            unsigned int a = std::min(e.first, e.second);
+            unsigned int b = std::max(e.first, e.second);
+            EdgeKey k{a,b};
+            edgeMap[k].push_back(tri);
+        }
+    }
+
+    // Build neighbor lists from edge map
+    for (const auto& kv : edgeMap) {
+        const auto& tris = kv.second;
+        for (size_t i = 0; i < tris.size(); ++i) {
+            for (size_t j = i + 1; j < tris.size(); ++j) {
+                int t1 = tris[i];
+                int t2 = tris[j];
+                m_triNeighbors[t1].push_back(t2);
+                m_triNeighbors[t2].push_back(t1);
+            }
+        }
+    }
+}
+
+QVector3D MeshBuffer::triangleNormal(int triIdx) const
+{
+    size_t base = static_cast<size_t>(triIdx) * 3;
+    if (base + 2 >= m_pickIndices.size()) return QVector3D(0,0,0);
+    const QVector3D& v0 = m_pickVerts[m_pickIndices[base+0]];
+    const QVector3D& v1 = m_pickVerts[m_pickIndices[base+1]];
+    const QVector3D& v2 = m_pickVerts[m_pickIndices[base+2]];
+    QVector3D e1 = v1 - v0;
+    QVector3D e2 = v2 - v0;
+    QVector3D n = QVector3D::crossProduct(e1, e2);
+    float len = std::sqrt(QVector3D::dotProduct(n,n));
+    if (len > 1e-9f) return n / len;
+    return QVector3D(0,0,0);
 }
 
 #endif // ELCAD_HAVE_OCCT
@@ -195,8 +257,11 @@ static bool rayAABB(const QVector3D& o, const QVector3D& d,
     return tmax > 0.f;
 }
 
-bool MeshBuffer::rayIntersect(const QVector3D& origin, const QVector3D& dir, float& outT) const
+bool MeshBuffer::rayIntersectDetailed(const QVector3D& origin, const QVector3D& dir,
+                                        float& outT, int& outTriIndex, float& outU, float& outV) const
 {
+    outTriIndex = -1;
+    outU = outV = 0.f;
     if (m_pickIndices.empty()) return false;
 
     // Fast bbox rejection
@@ -208,7 +273,8 @@ bool MeshBuffer::rayIntersect(const QVector3D& origin, const QVector3D& dir, flo
     bool  hit  = false;
 
     const size_t n = m_pickIndices.size();
-    for (size_t i = 0; i + 2 < n; i += 3) {
+    int triIndex = 0;
+    for (size_t i = 0; i + 2 < n; i += 3, ++triIndex) {
         const QVector3D& v0 = m_pickVerts[m_pickIndices[i]];
         const QVector3D& v1 = m_pickVerts[m_pickIndices[i+1]];
         const QVector3D& v2 = m_pickVerts[m_pickIndices[i+2]];
@@ -217,7 +283,7 @@ bool MeshBuffer::rayIntersect(const QVector3D& origin, const QVector3D& dir, flo
         QVector3D edge2 = v2 - v0;
         QVector3D h = QVector3D::crossProduct(dir, edge2);
         float a = QVector3D::dotProduct(edge1, h);
-        if (qAbs(a) < kEps) continue;
+        if (qAbs(a) < kEps) { continue; }
 
         float f = 1.f / a;
         QVector3D s = origin - v0;
@@ -232,11 +298,20 @@ bool MeshBuffer::rayIntersect(const QVector3D& origin, const QVector3D& dir, flo
         if (t > kEps && t < minT) {
             minT = t;
             hit  = true;
+            outU = u;
+            outV = v;
+            outTriIndex = triIndex;
         }
     }
 
     if (hit) outT = minT;
     return hit;
+}
+
+bool MeshBuffer::rayIntersect(const QVector3D& origin, const QVector3D& dir, float& outT) const
+{
+    int triIdx; float u,v;
+    return rayIntersectDetailed(origin, dir, outT, triIdx, u, v);
 }
 
 void MeshBuffer::upload(const std::vector<Vertex>& verts,

@@ -24,6 +24,10 @@ void Renderer::initialize()
     m_sketchRenderer.initialize();
     m_gizmo.initialize();
 
+    // Highlight buffers
+    glGenVertexArrays(1, &m_highlightVao);
+    glGenBuffers(1, &m_highlightVbo);
+
     m_initialized = true;
     LOG_INFO("Renderer initialised — phong shader valid={}, edge shader valid={}",
              m_phong.isValid(), m_edge.isValid());
@@ -61,7 +65,7 @@ void Renderer::render(Camera& camera, Document* doc,
     for (auto& bodyPtr : doc->bodies()) {
         Body* body = bodyPtr.get();
         if (!body->visible()) continue;
-        drawBody(body, view, proj, camPos);
+        drawBody(body, view, proj, camPos, doc);
     }
 
     glDisable(GL_POLYGON_OFFSET_FILL);
@@ -97,10 +101,10 @@ void Renderer::render(Camera& camera, Document* doc,
 }
 
 void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& proj,
-                        const QVector3D& camPos)
+                        const QVector3D& camPos, Document* doc)
 {
 #ifndef ELCAD_HAVE_OCCT
-    Q_UNUSED(body) Q_UNUSED(view) Q_UNUSED(proj) Q_UNUSED(camPos)
+    Q_UNUSED(body) Q_UNUSED(view) Q_UNUSED(proj) Q_UNUSED(camPos) Q_UNUSED(doc)
     return;
 #else
     if (!body->hasShape()) return;
@@ -113,7 +117,7 @@ void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& pr
     // Normal matrix = transpose(inverse(model)) — identity here
     QMatrix3x3 normalMat = model.normalMatrix();
 
-    // Body colour: brighter when selected
+    // Body colour: brighter when selected (whole-body selection)
     QColor c = body->color();
     if (body->selected())
         c = c.lighter(140);
@@ -155,6 +159,112 @@ void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& pr
         glLineWidth(1.2f);
         mesh->drawEdges();
         m_edge.release();
+    }
+
+    // ── Per-item highlights (faces/edges/vertices) ───────────────────────────
+    const auto selItems = doc ? doc->selectionItems() : std::vector<Document::SelectedItem>{};
+    if (!selItems.empty()) {
+        std::vector<QVector3D> triCentroids;
+        std::vector<QVector3D> vertPoints;
+        std::vector<QVector3D> edgeLines; // pairs of points
+
+        const auto& pv = mesh->pickVertices();
+        const auto& pi = mesh->pickIndices();
+
+        for (const auto& s : selItems) {
+            if (s.bodyId != body->id()) continue;
+            if (s.type == Document::SelectedItem::Type::Face) {
+                int tri = s.index;
+                size_t base = static_cast<size_t>(tri) * 3;
+                if (base + 2 < pi.size()) {
+                    const QVector3D& a = pv[pi[base]];
+                    const QVector3D& b = pv[pi[base+1]];
+                    const QVector3D& c = pv[pi[base+2]];
+                    triCentroids.push_back((a + b + c) / 3.0f);
+                }
+            } else if (s.type == Document::SelectedItem::Type::Vertex) {
+                int vid = s.index;
+                if (vid >= 0 && static_cast<size_t>(vid) < pv.size())
+                    vertPoints.push_back(pv[vid]);
+            } else if (s.type == Document::SelectedItem::Type::Edge) {
+                int enc = s.index;
+                int tri = enc / 3;
+                int local = enc % 3;
+                size_t base = static_cast<size_t>(tri) * 3;
+                if (base + 2 < pi.size()) {
+                    int i0 = pi[base + local];
+                    int i1 = pi[base + ((local + 1) % 3)];
+                    edgeLines.push_back(pv[i0]);
+                    edgeLines.push_back(pv[i1]);
+                }
+            }
+        }
+
+        // Draw centroids as points
+        if (!triCentroids.empty()) {
+            m_edge.bind();
+            m_edge.setMat4("uModel", model);
+            m_edge.setMat4("uView", view);
+            m_edge.setMat4("uProjection", proj);
+            m_edge.setVec3("uColor", QVector3D(1.0f, 0.7f, 0.0f));
+
+            glBindVertexArray(m_highlightVao);
+            glBindBuffer(GL_ARRAY_BUFFER, m_highlightVbo);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(triCentroids.size() * sizeof(QVector3D)),
+                         triCentroids.data(), GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+            glEnableVertexAttribArray(0);
+            glPointSize(8.0f);
+            glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(triCentroids.size()));
+            glDisableVertexAttribArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+            m_edge.release();
+        }
+
+        // Draw vertex points
+        if (!vertPoints.empty()) {
+            m_edge.bind();
+            m_edge.setMat4("uModel", model);
+            m_edge.setMat4("uView", view);
+            m_edge.setMat4("uProjection", proj);
+            m_edge.setVec3("uColor", QVector3D(0.95f, 0.95f, 0.2f));
+
+            glBindVertexArray(m_highlightVao);
+            glBindBuffer(GL_ARRAY_BUFFER, m_highlightVbo);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertPoints.size() * sizeof(QVector3D)),
+                         vertPoints.data(), GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+            glEnableVertexAttribArray(0);
+            glPointSize(10.0f);
+            glDrawArrays(GL_POINTS, 0, static_cast<GLsizei>(vertPoints.size()));
+            glDisableVertexAttribArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+            m_edge.release();
+        }
+
+        // Draw edge lines
+        if (!edgeLines.empty()) {
+            m_edge.bind();
+            m_edge.setMat4("uModel", model);
+            m_edge.setMat4("uView", view);
+            m_edge.setMat4("uProjection", proj);
+            m_edge.setVec3("uColor", QVector3D(0.95f, 0.95f, 0.2f));
+
+            glBindVertexArray(m_highlightVao);
+            glBindBuffer(GL_ARRAY_BUFFER, m_highlightVbo);
+            glBufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(edgeLines.size() * sizeof(QVector3D)),
+                         edgeLines.data(), GL_DYNAMIC_DRAW);
+            glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+            glEnableVertexAttribArray(0);
+            glLineWidth(2.5f);
+            glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(edgeLines.size()));
+            glDisableVertexAttribArray(0);
+            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            glBindVertexArray(0);
+            m_edge.release();
+        }
     }
 #endif
 }
@@ -240,6 +350,134 @@ Body* Renderer::pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Do
         LOG_TRACE("Ray pick: no hit");
 
     return closest;
+#endif
+}
+
+bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc, Document::SelectedItem& outHit)
+{
+#ifndef ELCAD_HAVE_OCCT
+    Q_UNUSED(rayOrigin) Q_UNUSED(rayDir) Q_UNUSED(doc) Q_UNUSED(outHit)
+    return false;
+#else
+    outHit = {};
+    if (!doc) return false;
+
+    Body* closest = nullptr;
+    float minT    = std::numeric_limits<float>::max();
+    int   bestTri = -1;
+    float bestU = 0.f, bestV = 0.f;
+
+    for (auto& bodyPtr : doc->bodies()) {
+        Body* body = bodyPtr.get();
+        if (!body->visible()) continue;
+
+        MeshBuffer* mesh = getMeshBuffer(body);
+        if (!mesh || mesh->isEmpty()) continue;
+
+        float t; int triIdx; float u,v;
+        if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v) && t < minT) {
+            minT = t;
+            closest = body;
+            bestTri = triIdx;
+            bestU = u; bestV = v;
+        }
+    }
+
+    if (!closest) return false;
+
+    Document::SelectedItem item;
+    item.bodyId = closest->id();
+    item.index = -1;
+    item.type = Document::SelectedItem::Type::Body;
+
+    if (bestTri >= 0) {
+        float alpha = 1.0f - bestU - bestV;
+        const float vertexEps = 1e-3f;
+        const float edgeEps = 0.02f;
+
+        if (alpha > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 0; }
+        else if (bestU > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 1; }
+        else if (bestV > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 2; }
+        else if (alpha < edgeEps || bestU < edgeEps || bestV < edgeEps) {
+            item.type = Document::SelectedItem::Type::Edge;
+            int edgeLocal = 0;
+            if (alpha < edgeEps) edgeLocal = 0;
+            else if (bestU < edgeEps) edgeLocal = 1;
+            else edgeLocal = 2;
+            item.index = bestTri * 3 + edgeLocal;
+        } else {
+            item.type = Document::SelectedItem::Type::Face;
+            item.index = bestTri;
+        }
+    }
+
+    outHit = item;
+    LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f}", outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT);
+    return true;
+#endif
+}
+
+
+std::vector<int> Renderer::expandFaceSelection(Body* body, int startTri, float angleDeg, float distanceTol)
+{
+#ifndef ELCAD_HAVE_OCCT
+    Q_UNUSED(body) Q_UNUSED(startTri) Q_UNUSED(angleDeg) Q_UNUSED(distanceTol)
+    return {};
+#else
+    std::vector<int> result;
+    if (!body) return result;
+
+    MeshBuffer* mesh = getMeshBuffer(body);
+    if (!mesh || mesh->isEmpty()) return result;
+
+    mesh->ensureAdjacencyComputed();
+    const auto& neighbors = mesh->triangleNeighbors();
+    int triCount = static_cast<int>(mesh->triangleCount() / 3);
+    if (startTri < 0 || startTri >= triCount) return result;
+
+    // Reference normal and plane
+    QVector3D refN = mesh->triangleNormal(startTri);
+    size_t base = static_cast<size_t>(startTri) * 3;
+    const auto& pv = mesh->pickVertices();
+    const auto& pi = mesh->pickIndices();
+    QVector3D v0 = pv[pi[base+0]];
+    float angleTolRad = qDegreesToRadians(angleDeg);
+    float cosAngleTol = std::cos(angleTolRad);
+
+    // BFS
+    std::vector<char> visited(triCount, 0);
+    std::vector<int> stack;
+    stack.push_back(startTri);
+    visited[startTri] = 1;
+
+    while (!stack.empty()) {
+        int cur = stack.back(); stack.pop_back();
+        result.push_back(cur);
+
+        for (int nb : neighbors[cur]) {
+            if (nb < 0 || nb >= triCount) continue;
+            if (visited[nb]) continue;
+
+            QVector3D n = mesh->triangleNormal(nb);
+            // angle via dot product (normals are unit)
+            float d = QVector3D::dotProduct(refN, n);
+            if (d < cosAngleTol) continue;
+
+            // plane distance check: compute neighbor triangle vertices and max distance to ref plane
+            size_t b2 = static_cast<size_t>(nb) * 3;
+            QVector3D va = pv[pi[b2+0]];
+            QVector3D vb = pv[pi[b2+1]];
+            QVector3D vc = pv[pi[b2+2]];
+            auto distToPlane = [&](const QVector3D& p){ return qAbs(QVector3D::dotProduct(p - v0, refN)); };
+            float maxd = std::max({distToPlane(va), distToPlane(vb), distToPlane(vc)});
+            if (maxd > distanceTol) continue;
+
+            visited[nb] = 1;
+            stack.push_back(nb);
+        }
+    }
+
+    return result;
 #endif
 }
 

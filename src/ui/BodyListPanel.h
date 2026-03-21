@@ -1,6 +1,8 @@
 #pragma once
 #include <QDockWidget>
 #include <QTreeWidget>
+#include <QListWidget>
+#include <QLabel>
 
 namespace elcad {
 
@@ -28,6 +30,8 @@ private:
     QTreeWidgetItem* itemForBody(quint64 id) const;
 
     QTreeWidget* m_tree{nullptr};
+    QLabel*      m_selectedLabel{nullptr};
+    QListWidget* m_selectedList{nullptr};
     Document*    m_doc{nullptr};
     bool         m_updating{false};
 };

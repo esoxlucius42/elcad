@@ -135,30 +135,23 @@ void PropertiesPanel::refresh()
 {
     if (!m_doc) { showNothing(); return; }
 
-    Body* sel = m_doc->singleSelectedBody();
-    if (!sel) {
-        // Check for multiple selection
-        int count = 0;
-        for (auto& b : m_doc->bodies())
-            if (b->selected()) ++count;
+    auto sel = m_doc->selectionItems();
+    if (sel.empty()) { showNothing(); return; }
 
-        if (count == 0) { showNothing(); return; }
-
-        // Multiple selected — show count only
-        m_stack->setCurrentIndex(0);
-        // Reuse nothing page label — just show count
-        auto* lbl = qobject_cast<QLabel*>(
-            m_stack->widget(0)->layout()->itemAt(0)->widget());
-        if (lbl) lbl->setText(QString("%1 bodies selected").arg(count));
-        return;
+    // If exactly one selection and it's a whole-body, show body
+    if (sel.size() == 1 && sel[0].type == Document::SelectedItem::Type::Body) {
+        if (Body* b = m_doc->bodyById(sel[0].bodyId)) {
+            showBody(b);
+            return;
+        }
     }
 
-    // Restore nothing label
+    // Otherwise show a generic multi-selection summary
+    m_stack->setCurrentIndex(0);
+    int count = static_cast<int>(sel.size());
     auto* lbl = qobject_cast<QLabel*>(
         m_stack->widget(0)->layout()->itemAt(0)->widget());
-    if (lbl) lbl->setText("No selection");
-
-    showBody(sel);
+    if (lbl) lbl->setText(QString("%1 items selected").arg(count));
 }
 
 void PropertiesPanel::showBody(Body* body)

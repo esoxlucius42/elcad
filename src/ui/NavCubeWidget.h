@@ -69,8 +69,8 @@ private:
     bool hitTestPerspButton(QPoint pos) const;
 
     QRectF  perspButtonRect() const;
-    QPointF widgetCentre()    const { return {width() * 0.5f, height() * 0.5f - 10}; }
-    float   cubeScale()       const { return qMin(width(), height()) * 0.22f; }
+    QPointF widgetCentre()    const { return {width() * 0.5f, height() * 0.5f}; }
+    float   cubeScale()       const { return qMin(width(), height()) * 0.21f; }
 
     // ── State ────────────────────────────────────────────────────────────────
     float m_yaw{45.f};

@@ -86,10 +86,61 @@ int Document::bodyCount() const
 void Document::clearSelection()
 {
     bool changed = false;
+    if (!m_selection.empty()) {
+        m_selection.clear();
+        changed = true;
+    }
+
+    // Keep backwards compatibility: clear body->selected flags
     for (auto& b : m_bodies) {
         if (b->selected()) { b->setSelected(false); changed = true; }
     }
+
     if (changed) emit selectionChanged();
+}
+
+void Document::addSelection(const SelectedItem& it)
+{
+    if (isSelected(it)) return;
+    m_selection.push_back(it);
+
+    // When selecting a whole body, keep legacy flag in Body for UI convenience
+    if (it.type == SelectedItem::Type::Body) {
+        if (Body* b = bodyById(it.bodyId)) b->setSelected(true);
+    }
+
+    emit selectionChanged();
+}
+
+void Document::removeSelection(const SelectedItem& it)
+{
+    auto itPos = std::find_if(m_selection.begin(), m_selection.end(),
+        [&](const SelectedItem& s){ return s == it; });
+    if (itPos == m_selection.end()) return;
+    m_selection.erase(itPos);
+
+    if (it.type == SelectedItem::Type::Body) {
+        if (Body* b = bodyById(it.bodyId)) b->setSelected(false);
+    }
+
+    emit selectionChanged();
+}
+
+void Document::toggleSelection(const SelectedItem& it)
+{
+    if (isSelected(it)) removeSelection(it);
+    else addSelection(it);
+}
+
+bool Document::isSelected(const SelectedItem& it) const
+{
+    return std::any_of(m_selection.begin(), m_selection.end(),
+                       [&](const SelectedItem& s){ return s == it; });
+}
+
+std::vector<Document::SelectedItem> Document::selectionItems() const
+{
+    return m_selection;
 }
 
 Body* Document::singleSelectedBody() const

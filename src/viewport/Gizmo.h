@@ -23,7 +23,7 @@ public:
     // Draw all handles for the current mode.
     // Clears the depth buffer first so the gizmo always renders on top.
     void draw(const QMatrix4x4& view, const QMatrix4x4& proj,
-              const QVector3D& camPos, int viewH, float fovDeg);
+              const QVector3D& camPos, int viewW, int viewH, float fovDeg);
 
     GizmoMode  mode()    const  { return m_mode; }
     void       setMode(GizmoMode m) { m_mode = m; }
@@ -36,12 +36,12 @@ public:
 
     // Call each mouseMoveEvent; returns true if hover state changed (requires redraw).
     bool       updateHover(const QVector3D& rayO, const QVector3D& rayD,
-                           const QVector3D& camPos, int viewH, float fovDeg);
+                           const QVector3D& camPos, int viewW, int viewH, float fovDeg);
     GizmoHandle hoveredHandle() const { return m_hovered; }
 
     // Returns the handle under the given world-space ray, or None.
     GizmoHandle pick(const QVector3D& rayO, const QVector3D& rayD,
-                     const QVector3D& camPos, int viewH, float fovDeg);
+                     const QVector3D& camPos, int viewW, int viewH, float fovDeg);
 
     // Drag results: one field is populated per mode.
     struct DragDelta {
@@ -53,9 +53,9 @@ public:
 
     void       beginDrag(GizmoHandle handle,
                          const QVector3D& rayO, const QVector3D& rayD,
-                         const QVector3D& camPos, int viewH, float fovDeg);
+                         const QVector3D& camPos, int viewW, int viewH, float fovDeg);
     DragDelta  updateDrag(const QVector3D& rayO, const QVector3D& rayD,
-                          const QVector3D& camPos, int viewH, float fovDeg);
+                          const QVector3D& camPos, int viewW, int viewH, float fovDeg);
     void       endDrag();
 
     bool        isDragging()  const { return m_dragging; }
@@ -112,7 +112,7 @@ private:
     void destroyHandle(Handle& h);
 
     // ── Screen-space scale ──────────────────────────────────────────────────
-    float computeScale(const QVector3D& camPos, int viewH, float fovDeg) const;
+    float computeScale(const QVector3D& camPos, int viewW, int viewH, float fovDeg) const;
 
     // ── Picking ─────────────────────────────────────────────────────────────
     GizmoHandle pickAll(const QVector3D& localO, const QVector3D& localD) const;

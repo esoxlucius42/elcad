@@ -5,6 +5,7 @@
 #include "viewport/MeshBuffer.h"
 #include "viewport/ShaderProgram.h"
 #include "sketch/SketchRenderer.h"
+#include "document/Document.h"
 #include <QOpenGLFunctions_3_3_Core>
 #include <unordered_map>
 #include <memory>
@@ -25,7 +26,8 @@ public:
     void resize(int w, int h);
     void render(Camera& camera, Document* doc = nullptr,
                 const std::vector<SketchEntity>* sketchPreview = nullptr,
-                const QVector2D*                 snapPos       = nullptr);
+                const QVector2D*                 snapPos       = nullptr,
+                float                             devicePixelRatio = 1.0f);
 
     // Invalidate cached mesh for a body (call when body shape changes)
     void invalidateMesh(quint64 bodyId);
@@ -33,6 +35,13 @@ public:
 
     // Ray-pick: returns the closest visible body hit by the ray, or nullptr.
     Body* pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc);
+
+    // Ray-pick detailed: returns the closest visible hit (body/face/edge/vertex). If hit, outHit is filled and true returned.
+    bool pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc, Document::SelectedItem& outHit);
+
+    // Expand a clicked triangle into a connected coplanar set. Returns triangle indices.
+    std::vector<int> expandFaceSelection(Body* body, int startTri, float angleDeg = 2.0f, float distanceTol = 1e-3f);
+
 
     bool gridVisible() const     { return m_gridVisible; }
     void setGridVisible(bool on) { m_gridVisible = on; }
@@ -45,8 +54,9 @@ public:
 
 private:
     void drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& proj,
-                  const QVector3D& camPos);
+                  const QVector3D& camPos, Document* doc);
     MeshBuffer* getMeshBuffer(Body* body);
+
 
     Grid           m_grid;
     ShaderProgram  m_phong;
@@ -60,6 +70,10 @@ private:
 
     // Body ID → mesh buffer cache
     std::unordered_map<quint64, std::unique_ptr<MeshBuffer>> m_meshCache;
+
+    // One-time GL buffers for highlights to avoid realloc each frame
+    GLuint m_highlightVao{0};
+    GLuint m_highlightVbo{0};
 
     // Lighting constants
     QVector3D m_lightDir{0.6f, 1.0f, 0.8f};

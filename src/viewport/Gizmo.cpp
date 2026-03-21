@@ -350,13 +350,23 @@ void Gizmo::destroyHandle(Handle& h)
 
 // ── Screen-space scale ────────────────────────────────────────────────────────
 
-float Gizmo::computeScale(const QVector3D& camPos, int viewH, float fovDeg) const
+float Gizmo::computeScale(const QVector3D& camPos, int viewW, int viewH, float fovDeg) const
 {
     // TODO: support orthographic projection
     float dist = (camPos - m_position).length();
     if (dist < 1.0f) dist = 1.0f;
     float fovRad = qDegreesToRadians(fovDeg);
-    return dist * std::tan(fovRad * 0.5f) * 2.0f * kGizmoPx / viewH;
+
+    // Desired gizmo size in pixels (target screen-space size)
+    float targetPx = kGizmoPx;
+
+    // Ensure gizmo (ring major radius) doesn't exceed view bounds
+    float halfMin = qMin(viewW, viewH) * 0.5f;
+    float maxAllowedTargetPx = qMax(16.0f, (halfMin - 4.0f) / kRingR); // 4px margin
+    if (targetPx * kRingR > halfMin - 4.0f) targetPx = maxAllowedTargetPx;
+
+    // Map target pixels to world-space scale using vertical FOV and view height
+    return dist * std::tan(fovRad * 0.5f) * 2.0f * targetPx / float(viewH);
 }
 
 // ── Colors ────────────────────────────────────────────────────────────────────
@@ -399,15 +409,29 @@ void Gizmo::drawHandle(const Handle& h, const QVector4D& color, const QMatrix4x4
 }
 
 void Gizmo::draw(const QMatrix4x4& view, const QMatrix4x4& proj,
-                  const QVector3D& camPos, int viewH, float fovDeg)
+                  const QVector3D& camPos, int viewW, int viewH, float fovDeg)
 {
     if (!m_visible || !m_initialized || !m_shader.isValid()) return;
 
-    float s = computeScale(camPos, viewH, fovDeg);
-    QMatrix4x4 model;
-    model.translate(m_position);
-    model.scale(s);
+    float s = computeScale(camPos, viewW, viewH, fovDeg);
+    // Build model matrix as S * T', where T' translates by (m_position / s).
+    // This yields transform: p' = S * (p + m_position/s) = S*p + m_position
+    // so the scaled geometry is centered at m_position in world space.
+    QMatrix4x4 T; T.setToIdentity(); T.translate(m_position / s);
+    QMatrix4x4 S; S.setToIdentity(); S.scale(s);
+    QMatrix4x4 model = S * T;
     QMatrix4x4 mvp = proj * view * model;
+
+    // Debug: log gizmo projection info to help diagnose centering issues
+    {
+        QVector4D clip = proj * view * QVector4D(m_position, 1.0f);
+        float w = clip.w();
+        QVector3D ndc = (w == 0.0f) ? QVector3D(0,0,0) : QVector3D(clip.x()/w, clip.y()/w, clip.z()/w);
+        LOG_INFO("Gizmo: pos=({:.3f},{:.3f},{:.3f}) clip=({:.3f},{:.3f},{:.3f},{:.3f}) ndc=({:.3f},{:.3f},{:.3f}) scale={:.3f} viewH={} viewW={}",
+                 m_position.x(), m_position.y(), m_position.z(),
+                 clip.x(), clip.y(), clip.z(), clip.w(),
+                 ndc.x(), ndc.y(), ndc.z(), s, viewH, viewW);
+    }
 
     // Clear depth so gizmo always draws on top of scene geometry
     glClear(GL_DEPTH_BUFFER_BIT);
@@ -416,6 +440,10 @@ void Gizmo::draw(const QMatrix4x4& view, const QMatrix4x4& proj,
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     m_shader.bind();
+
+    // Also prepare an unscaled model transform for debug wireframe overlay
+    QMatrix4x4 modelNoScale; modelNoScale.translate(m_position);
+    QMatrix4x4 mvpNoScale = proj * view * modelNoScale;
 
     auto col = [&](GizmoHandle h) {
         return handleColor(h, m_hovered == h || (m_dragging && m_dragHandle == h));
@@ -440,6 +468,17 @@ void Gizmo::draw(const QMatrix4x4& view, const QMatrix4x4& proj,
             auto h = static_cast<GizmoHandle>(static_cast<int>(GizmoHandle::X) + i);
             drawHandle(m_rotateH[i], col(h), mvp);
         }
+
+        // Debug: draw unscaled wireframe rings at exact m_position so we can
+        // compare scaled visual to world center. Magenta, wireframe.
+        {
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            QVector4D wireCol(1.0f, 0.0f, 0.8f, 1.0f);
+            for (int i = 0; i < 3; ++i) {
+                drawHandle(m_rotateH[i], wireCol, mvpNoScale);
+            }
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+        }
         break;
 
     case GizmoMode::Scale:
@@ -450,6 +489,11 @@ void Gizmo::draw(const QMatrix4x4& view, const QMatrix4x4& proj,
         drawHandle(m_scaleH[3], col(GizmoHandle::XYZ), mvp);
         break;
     }
+
+    // Draw a small center marker (always) to visualise the computed gizmo center.
+    // This uses the prebuilt center cube (m_scaleH[3]) drawn with semi-transparent yellow.
+    QVector4D centerCol(1.0f, 0.9f, 0.1f, 0.9f);
+    drawHandle(m_scaleH[3], centerCol, mvp);
 
     m_shader.release();
 }
@@ -604,11 +648,13 @@ GizmoHandle Gizmo::pickAll(const QVector3D& O, const QVector3D& D) const
 }
 
 GizmoHandle Gizmo::pick(const QVector3D& rayO, const QVector3D& rayD,
-                          const QVector3D& camPos, int viewH, float fovDeg)
+                          const QVector3D& camPos, int viewW, int viewH, float fovDeg)
 {
     if (!m_visible) return GizmoHandle::None;
-    float s = computeScale(camPos, viewH, fovDeg);
-    QMatrix4x4 model; model.translate(m_position); model.scale(s);
+    float s = computeScale(camPos, viewW, viewH, fovDeg);
+    QMatrix4x4 T; T.setToIdentity(); T.translate(m_position / s);
+    QMatrix4x4 S; S.setToIdentity(); S.scale(s);
+    QMatrix4x4 model = S * T;
     QMatrix4x4 inv = model.inverted();
     QVector4D lo = inv * QVector4D(rayO, 1.f);
     QVector4D ld = inv * QVector4D(rayD, 0.f);
@@ -616,9 +662,9 @@ GizmoHandle Gizmo::pick(const QVector3D& rayO, const QVector3D& rayD,
 }
 
 bool Gizmo::updateHover(const QVector3D& rayO, const QVector3D& rayD,
-                          const QVector3D& camPos, int viewH, float fovDeg)
+                          const QVector3D& camPos, int viewW, int viewH, float fovDeg)
 {
-    GizmoHandle newH = m_visible ? pick(rayO, rayD, camPos, viewH, fovDeg) : GizmoHandle::None;
+    GizmoHandle newH = m_visible ? pick(rayO, rayD, camPos, viewW, viewH, fovDeg) : GizmoHandle::None;
     if (newH != m_hovered) { m_hovered = newH; return true; }
     return false;
 }
@@ -660,11 +706,11 @@ QVector3D Gizmo::rayOnPlane(const QVector3D& rayO, const QVector3D& rayD,
 
 void Gizmo::beginDrag(GizmoHandle handle,
                        const QVector3D& rayO, const QVector3D& rayD,
-                       const QVector3D& camPos, int viewH, float fovDeg)
+                       const QVector3D& camPos, int viewW, int viewH, float fovDeg)
 {
     m_dragging       = true;
     m_dragHandle     = handle;
-    m_dragGizmoScale = computeScale(camPos, viewH, fovDeg);
+    m_dragGizmoScale = computeScale(camPos, viewW, viewH, fovDeg);
     QVector3D camDir = (m_position - camPos).normalized();
 
     if (m_mode == GizmoMode::Translate || m_mode == GizmoMode::Scale) {
@@ -707,7 +753,7 @@ void Gizmo::beginDrag(GizmoHandle handle,
 }
 
 Gizmo::DragDelta Gizmo::updateDrag(const QVector3D& rayO, const QVector3D& rayD,
-                                    const QVector3D& camPos, int /*viewH*/, float /*fovDeg*/)
+                                    const QVector3D& camPos, int viewW, int viewH, float fovDeg)
 {
     DragDelta delta;
     if (!m_dragging) return delta;
