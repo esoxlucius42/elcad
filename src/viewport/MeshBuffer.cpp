@@ -400,9 +400,24 @@ bool MeshBuffer::rayIntersectDetailed(const QVector3D& origin, const QVector3D& 
                     }
                 }
             } else {
-                // push children (near first heuristic could be added)
-                if (node.right != -1) stack.push_back(node.right);
-                if (node.left != -1) stack.push_back(node.left);
+                // Near-first traversal: test children AABBs and push far child first so near child is popped first
+                int left = node.left;
+                int right = node.right;
+                float tLeft = std::numeric_limits<float>::max();
+                float tRight = std::numeric_limits<float>::max();
+                bool hitLeft = false, hitRight = false;
+                if (left != -1) hitLeft = rayAABB(origin, dir, m_bvhNodes[left].bmin, m_bvhNodes[left].bmax, tLeft);
+                if (right != -1) hitRight = rayAABB(origin, dir, m_bvhNodes[right].bmin, m_bvhNodes[right].bmax, tRight);
+
+                if (hitLeft && hitRight) {
+                    // push far first
+                    if (tLeft > tRight) { stack.push_back(left); stack.push_back(right); }
+                    else { stack.push_back(right); stack.push_back(left); }
+                } else if (hitLeft) {
+                    stack.push_back(left);
+                } else if (hitRight) {
+                    stack.push_back(right);
+                }
             }
         }
     } else {

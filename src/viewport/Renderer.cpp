@@ -430,23 +430,13 @@ Body* Renderer::pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Do
         MeshBuffer* mesh = getMeshBuffer(body);
         if (!mesh || mesh->isEmpty()) continue;
 
-        float t;
-        bool hit = false;
-        int triCount = mesh->triangleCount() / 3;
-        if (triCount > kSelectionTriangleLimit && body->hasBbox()) {
-            // Fast bbox test
-            float tAabb;
-            if (rayAabb(rayOrigin, rayDir, body->bboxMin(), body->bboxMax(), tAabb)) {
-                t = tAabb;
-                hit = true;
+        float t; int triIdx; float u,v;
+        // Always perform per-triangle intersection to get accurate closest hit
+        if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v)) {
+            if (t < minT) {
+                minT = t;
+                closest = body;
             }
-        } else {
-            if (mesh->rayIntersect(rayOrigin, rayDir, t)) hit = true;
-        }
-
-        if (hit && t < minT) {
-            minT    = t;
-            closest = body;
         }
     }
 
@@ -500,24 +490,12 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
         if (!mesh || mesh->isEmpty()) continue;
 
         float t; int triIdx; float u,v;
-        int triCount = mesh->triangleCount() / 3;
-        if (triCount > kSelectionTriangleLimit && body->hasBbox()) {
-            // coarse bbox-based pick; return body-level hit only
-            float tAabb;
-            if (rayAabb(rayOrigin, rayDir, body->bboxMin(), body->bboxMax(), tAabb)) {
-                if (tAabb < minT) {
-                    minT = tAabb;
-                    closest = body;
-                    bestTri = -1;
-                }
-            }
-        } else {
-            if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v) && t < minT) {
-                minT = t;
-                closest = body;
-                bestTri = triIdx;
-                bestU = u; bestV = v;
-            }
+        // Detailed per-triangle intersection for accurate selection
+        if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v) && t < minT) {
+            minT = t;
+            closest = body;
+            bestTri = triIdx;
+            bestU = u; bestV = v;
         }
     }
 
