@@ -74,8 +74,23 @@ private:
     std::vector<QVector3D>    m_pickVerts;
     std::vector<unsigned int> m_pickIndices;
 
+    // Triangle ordering and centroids used by BVH
+    std::vector<int>          m_triOrder;        // triangle index -> order
+    std::vector<QVector3D>    m_triCentroids;
+
     // Cached triangle adjacency (triangle index -> neighbor triangle indices)
     std::vector<std::vector<int>> m_triNeighbors;
+
+    // Simple binary BVH for accelerating ray-triangle queries
+    struct BVHNode {
+        QVector3D bmin;
+        QVector3D bmax;
+        int       start{0};   // start index into m_triOrder
+        int       count{0};   // number of triangles in leaf
+        int       left{-1};   // child indices (internal)
+        int       right{-1};
+    };
+    std::vector<BVHNode> m_bvhNodes;
 
     bool m_initialized{false};
 };

@@ -176,6 +176,80 @@ void MeshBuffer::build(const TopoDS_Shape& shape, float deflection)
         m_pickVerts.push_back(v.position);
     m_pickIndices = triIndices;
 
+    // Build triangle order and centroids for BVH
+    size_t triCount = m_pickIndices.size() / 3;
+    m_triOrder.resize(triCount);
+    m_triCentroids.resize(triCount);
+    for (size_t t = 0; t < triCount; ++t) {
+        m_triOrder[t] = static_cast<int>(t);
+        unsigned int i0 = m_pickIndices[t*3 + 0];
+        unsigned int i1 = m_pickIndices[t*3 + 1];
+        unsigned int i2 = m_pickIndices[t*3 + 2];
+        const QVector3D& p0 = m_pickVerts[i0];
+        const QVector3D& p1 = m_pickVerts[i1];
+        const QVector3D& p2 = m_pickVerts[i2];
+        m_triCentroids[t] = (p0 + p1 + p2) / 3.0f;
+    }
+
+    // Build a simple BVH (median split) using an index list
+    m_bvhNodes.clear();
+    if (!m_triOrder.empty()) {
+        std::vector<int> indexList = m_triOrder; // triangle indices
+        std::vector<QVector3D> centroids = m_triCentroids; // centroid per triangle index
+
+        std::function<int(int,int)> buildIndexNode = [&](int start, int count) -> int {
+            BVHNode node;
+            QVector3D nbmin( std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
+            QVector3D nbmax(-std::numeric_limits<float>::max(),-std::numeric_limits<float>::max(),-std::numeric_limits<float>::max());
+            for (int i = 0; i < count; ++i) {
+                const QVector3D& c = centroids[start + i];
+                nbmin.setX(std::min(nbmin.x(), c.x())); nbmin.setY(std::min(nbmin.y(), c.y())); nbmin.setZ(std::min(nbmin.z(), c.z()));
+                nbmax.setX(std::max(nbmax.x(), c.x())); nbmax.setY(std::max(nbmax.y(), c.y())); nbmax.setZ(std::max(nbmax.z(), c.z()));
+            }
+            node.bmin = nbmin; node.bmax = nbmax;
+            node.start = start; node.count = count; node.left = node.right = -1;
+            int myIndex = static_cast<int>(m_bvhNodes.size());
+            m_bvhNodes.push_back(node);
+
+            if (count <= 4) return myIndex;
+
+            QVector3D extent = nbmax - nbmin;
+            int axis = 0;
+            if (extent.y() > extent.x() && extent.y() >= extent.z()) axis = 1;
+            else if (extent.z() > extent.x() && extent.z() > extent.y()) axis = 2;
+
+            int mid = start + count/2;
+            std::nth_element(indexList.begin() + start, indexList.begin() + mid, indexList.begin() + start + count,
+                             [&](int ia, int ib){ return centroids[ia][axis] < centroids[ib][axis]; });
+
+            // Reorder centroids slice to match indexList ordering for children
+            std::vector<QVector3D> tmpC(count);
+            for (int i = 0; i < count; ++i) tmpC[i] = centroids[indexList[start + i]];
+            for (int i = 0; i < count; ++i) centroids[start + i] = tmpC[i];
+
+            int leftIdx = buildIndexNode(start, mid - start);
+            int rightIdx = buildIndexNode(mid, start + count - mid);
+
+            m_bvhNodes[myIndex].left = leftIdx;
+            m_bvhNodes[myIndex].right = rightIdx;
+
+            // merge bounds
+            m_bvhNodes[myIndex].bmin = m_bvhNodes[leftIdx].bmin;
+            m_bvhNodes[myIndex].bmax = m_bvhNodes[leftIdx].bmax;
+            m_bvhNodes[myIndex].bmin.setX(std::min(m_bvhNodes[myIndex].bmin.x(), m_bvhNodes[rightIdx].bmin.x()));
+            m_bvhNodes[myIndex].bmin.setY(std::min(m_bvhNodes[myIndex].bmin.y(), m_bvhNodes[rightIdx].bmin.y()));
+            m_bvhNodes[myIndex].bmin.setZ(std::min(m_bvhNodes[myIndex].bmin.z(), m_bvhNodes[rightIdx].bmin.z()));
+            m_bvhNodes[myIndex].bmax.setX(std::max(m_bvhNodes[myIndex].bmax.x(), m_bvhNodes[rightIdx].bmax.x()));
+            m_bvhNodes[myIndex].bmax.setY(std::max(m_bvhNodes[myIndex].bmax.y(), m_bvhNodes[rightIdx].bmax.y()));
+            m_bvhNodes[myIndex].bmax.setZ(std::max(m_bvhNodes[myIndex].bmax.z(), m_bvhNodes[rightIdx].bmax.z()));
+            return myIndex;
+        };
+
+        buildIndexNode(0, static_cast<int>(triCount));
+        // store indexList ordering for traversal (maps node.start.. to triangle indices)
+        m_triOrder = indexList;
+    }
+
     // Reset adjacency; it will be computed on-demand
     m_triNeighbors.clear();
 }
@@ -272,35 +346,90 @@ bool MeshBuffer::rayIntersectDetailed(const QVector3D& origin, const QVector3D& 
     float minT = std::numeric_limits<float>::max();
     bool  hit  = false;
 
-    const size_t n = m_pickIndices.size();
-    int triIndex = 0;
-    for (size_t i = 0; i + 2 < n; i += 3, ++triIndex) {
-        const QVector3D& v0 = m_pickVerts[m_pickIndices[i]];
-        const QVector3D& v1 = m_pickVerts[m_pickIndices[i+1]];
-        const QVector3D& v2 = m_pickVerts[m_pickIndices[i+2]];
+    // If BVH available, traverse it; otherwise fall back to brute-force loop
+    if (!m_bvhNodes.empty() && !m_triOrder.empty()) {
+        std::vector<int> stack;
+        stack.reserve(64);
+        stack.push_back(0); // root
 
-        QVector3D edge1 = v1 - v0;
-        QVector3D edge2 = v2 - v0;
-        QVector3D h = QVector3D::crossProduct(dir, edge2);
-        float a = QVector3D::dotProduct(edge1, h);
-        if (qAbs(a) < kEps) { continue; }
+        while (!stack.empty()) {
+            int nodeIdx = stack.back(); stack.pop_back();
+            const BVHNode& node = m_bvhNodes[nodeIdx];
+            float nodeT;
+            if (!rayAABB(origin, dir, node.bmin, node.bmax, nodeT)) continue;
 
-        float f = 1.f / a;
-        QVector3D s = origin - v0;
-        float u = f * QVector3D::dotProduct(s, h);
-        if (u < 0.f || u > 1.f) continue;
+            if (node.left == -1 && node.right == -1) {
+                // leaf: iterate triangles in this node using m_triOrder
+                for (int i = 0; i < node.count; ++i) {
+                    int tri = m_triOrder[node.start + i];
+                    size_t base = static_cast<size_t>(tri) * 3;
+                    if (base + 2 >= m_pickIndices.size()) continue;
+                    const QVector3D& v0 = m_pickVerts[m_pickIndices[base+0]];
+                    const QVector3D& v1 = m_pickVerts[m_pickIndices[base+1]];
+                    const QVector3D& v2 = m_pickVerts[m_pickIndices[base+2]];
 
-        QVector3D q = QVector3D::crossProduct(s, edge1);
-        float v = f * QVector3D::dotProduct(dir, q);
-        if (v < 0.f || u + v > 1.f) continue;
+                    QVector3D edge1 = v1 - v0;
+                    QVector3D edge2 = v2 - v0;
+                    QVector3D h = QVector3D::crossProduct(dir, edge2);
+                    float a = QVector3D::dotProduct(edge1, h);
+                    if (qAbs(a) < kEps) { continue; }
 
-        float t = f * QVector3D::dotProduct(edge2, q);
-        if (t > kEps && t < minT) {
-            minT = t;
-            hit  = true;
-            outU = u;
-            outV = v;
-            outTriIndex = triIndex;
+                    float f = 1.f / a;
+                    QVector3D s = origin - v0;
+                    float u = f * QVector3D::dotProduct(s, h);
+                    if (u < 0.f || u > 1.f) continue;
+
+                    QVector3D q = QVector3D::crossProduct(s, edge1);
+                    float v = f * QVector3D::dotProduct(dir, q);
+                    if (v < 0.f || u + v > 1.f) continue;
+
+                    float t = f * QVector3D::dotProduct(edge2, q);
+                    if (t > kEps && t < minT) {
+                        minT = t;
+                        hit  = true;
+                        outU = u;
+                        outV = v;
+                        outTriIndex = tri;
+                    }
+                }
+            } else {
+                // push children (near first heuristic could be added)
+                if (node.right != -1) stack.push_back(node.right);
+                if (node.left != -1) stack.push_back(node.left);
+            }
+        }
+    } else {
+        // Brute-force fallback
+        const size_t n = m_pickIndices.size();
+        int triIndex = 0;
+        for (size_t i = 0; i + 2 < n; i += 3, ++triIndex) {
+            const QVector3D& v0 = m_pickVerts[m_pickIndices[i]];
+            const QVector3D& v1 = m_pickVerts[m_pickIndices[i+1]];
+            const QVector3D& v2 = m_pickVerts[m_pickIndices[i+2]];
+
+            QVector3D edge1 = v1 - v0;
+            QVector3D edge2 = v2 - v0;
+            QVector3D h = QVector3D::crossProduct(dir, edge2);
+            float a = QVector3D::dotProduct(edge1, h);
+            if (qAbs(a) < kEps) { continue; }
+
+            float f = 1.f / a;
+            QVector3D s = origin - v0;
+            float u = f * QVector3D::dotProduct(s, h);
+            if (u < 0.f || u > 1.f) continue;
+
+            QVector3D q = QVector3D::crossProduct(s, edge1);
+            float v = f * QVector3D::dotProduct(dir, q);
+            if (v < 0.f || u + v > 1.f) continue;
+
+            float t = f * QVector3D::dotProduct(edge2, q);
+            if (t > kEps && t < minT) {
+                minT = t;
+                hit  = true;
+                outU = u;
+                outV = v;
+                outTriIndex = triIndex;
+            }
         }
     }
 
