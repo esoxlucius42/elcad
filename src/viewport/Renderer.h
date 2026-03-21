@@ -43,6 +43,12 @@ public:
     // Ray-pick detailed: returns the closest visible hit (body/face/edge/vertex). If hit, outHit is filled and true returned.
     bool pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc, Document::SelectedItem& outHit);
 
+    // Ray-pick at screen pixel: projects per-body hit points and prefers the hit whose
+    // projected location is nearest the pixel (within threshold). Accepts camera to
+    // compute unproject/projection matrices. This reduces incorrect picks when nearby
+    // objects overlap in world-space.
+    bool pickHitAt(int px, int py, Document* doc, Camera& camera, Document::SelectedItem& outHit);
+
     // Return the face ordinal (0-based) for a given triangle index in a body, or -1 if unknown
     int faceOrdinalForTriangle(Body* body, int triIndex);
 

@@ -604,6 +604,92 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
 #endif
 }
 
+bool Renderer::pickHitAt(int px, int py, Document* doc, Camera& camera, Document::SelectedItem& outHit)
+{
+#ifndef ELCAD_HAVE_OCCT
+    Q_UNUSED(px) Q_UNUSED(py) Q_UNUSED(doc) Q_UNUSED(camera) Q_UNUSED(outHit)
+    return false;
+#else
+    outHit = {};
+    if (!doc) return false;
+
+    QVector3D rayOrigin, rayDir;
+    camera.unprojectRay(px, py, m_width, m_height, rayOrigin, rayDir);
+    // For perspective, prefer camera position as origin to avoid near-plane-internal hits
+    if (camera.isPerspective()) rayOrigin = camera.position();
+
+    float bestPixelDist = std::numeric_limits<float>::max();
+    float bestT = std::numeric_limits<float>::max();
+    Document::SelectedItem bestItem;
+    bool found = false;
+
+    QMatrix4x4 vp = camera.projectionMatrix() * camera.viewMatrix();
+
+    // Per-body detailed hit check and screen-space projection
+    for (auto& bodyPtr : doc->bodies()) {
+        Body* body = bodyPtr.get();
+        if (!body->visible()) continue;
+        MeshBuffer* mesh = getMeshBuffer(body);
+        if (!mesh || mesh->isEmpty()) continue;
+
+        float t; int triIdx; float u,v;
+        if (!mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v)) continue;
+        if (!(t > 0.f)) continue;
+
+        QVector3D hitPoint = rayOrigin + rayDir * t;
+        QVector4D clip = vp * QVector4D(hitPoint, 1.f);
+        if (clip.w() == 0.f) continue;
+        float ndcX = clip.x() / clip.w();
+        float ndcY = clip.y() / clip.w();
+        int sx = static_cast<int>((ndcX * 0.5f + 0.5f) * m_width);
+        int sy = static_cast<int>((1.f - (ndcY * 0.5f + 0.5f)) * m_height);
+        float pdist = std::hypot(float(sx - px), float(sy - py));
+
+        // Prefer hits near the pixel; break ties by smaller t (closer)
+        if (pdist < bestPixelDist - 0.5f || (std::abs(pdist - bestPixelDist) < 0.5f && t < bestT)) {
+            bestPixelDist = pdist;
+            bestT = t;
+            // Fill SelectedItem similarly to pickHit
+            Document::SelectedItem it;
+            it.bodyId = body->id(); it.index = -1; it.type = Document::SelectedItem::Type::Body;
+
+            if (triIdx >= 0) {
+                float alpha = 1.0f - u - v;
+                const float vertexEps = 1e-3f;
+                const float edgeEps = 0.02f;
+                if (alpha > 1.0f - vertexEps) { it.type = Document::SelectedItem::Type::Vertex; it.index = triIdx * 3 + 0; }
+                else if (u > 1.0f - vertexEps) { it.type = Document::SelectedItem::Type::Vertex; it.index = triIdx * 3 + 1; }
+                else if (v > 1.0f - vertexEps) { it.type = Document::SelectedItem::Type::Vertex; it.index = triIdx * 3 + 2; }
+                else if (alpha < edgeEps || u < edgeEps || v < edgeEps) {
+                    it.type = Document::SelectedItem::Type::Edge;
+                    int edgeLocal = 0;
+                    if (alpha < edgeEps) edgeLocal = 0;
+                    else if (u < edgeEps) edgeLocal = 1;
+                    else edgeLocal = 2;
+                    it.index = triIdx * 3 + edgeLocal;
+                } else {
+                    it.type = Document::SelectedItem::Type::Face;
+                    it.index = triIdx;
+                }
+            }
+            bestItem = it;
+            found = true;
+        }
+    }
+
+    // Threshold: if best projected hit is within this many pixels, accept it
+    const float kPixelThreshold = 12.0f;
+    if (found && bestPixelDist <= kPixelThreshold) {
+        outHit = bestItem;
+        LOG_DEBUG("pickHitAt: choosing body by screen proximity px={},py={} bestDist={} t={} bodyId={}", px, py, bestPixelDist, bestT, outHit.bodyId);
+        return true;
+    }
+
+    // Fallback to original ray-based pick
+    return pickHit(rayOrigin, rayDir, doc, outHit);
+#endif
+}
+
 int Renderer::faceOrdinalForTriangle(Body* body, int triIndex)
 {
 #ifndef ELCAD_HAVE_OCCT
