@@ -505,6 +505,7 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
             // coarse bbox-based pick; return body-level hit only
             float tAabb;
             if (rayAabb(rayOrigin, rayDir, body->bboxMin(), body->bboxMax(), tAabb)) {
+                LOG_DEBUG("Ray pick: AABB hit body id={} tAabb={:.4f} triCount={}", body->id(), tAabb, triCount);
                 if (tAabb < minT) {
                     minT = tAabb;
                     closest = body;
@@ -513,6 +514,18 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
             }
         } else {
             if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v) && t < minT) {
+                // compute centroid and face ordinal for verbose diagnostics
+                const auto& pv = mesh->pickVertices();
+                const auto& pi = mesh->pickIndices();
+                QVector3D centroid(0,0,0);
+                size_t base = static_cast<size_t>(triIdx) * 3;
+                if (base + 2 < pi.size()) {
+                    centroid = (pv[pi[base+0]] + pv[pi[base+1]] + pv[pi[base+2]]) / 3.0f;
+                }
+                int faceOrd = mesh->faceOrdinalForTriangle(triIdx);
+                LOG_DEBUG("Ray pick: tri hit body id={} tri={} t={:.4f} u={:.4f} v={:.4f} centroid=({:.3f},{:.3f},{:.3f}) faceOrd={}",
+                          body->id(), triIdx, t, u, v, centroid.x(), centroid.y(), centroid.z(), faceOrd);
+
                 minT = t;
                 closest = body;
                 bestTri = triIdx;
@@ -552,7 +565,32 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
     }
 
     outHit = item;
+#ifdef ELCAD_HAVE_OCCT
+    if (closest && bestTri >= 0) {
+        MeshBuffer* m = getMeshBuffer(closest);
+        if (m) {
+            const auto& pv = m->pickVertices();
+            const auto& pi = m->pickIndices();
+            size_t base = static_cast<size_t>(bestTri) * 3;
+            if (base + 2 < pi.size()) {
+                QVector3D c = (pv[pi[base+0]] + pv[pi[base+1]] + pv[pi[base+2]]) / 3.0f;
+                int faceOrd = m->faceOrdinalForTriangle(bestTri);
+                LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f} (tri={} centroid=({:.3f},{:.3f},{:.3f}) faceOrd={})",
+                          outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT, bestTri, c.x(), c.y(), c.z(), faceOrd);
+            } else {
+                LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f} (tri={})",
+                          outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT, bestTri);
+            }
+        } else {
+            LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f} (tri={})",
+                      outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT, bestTri);
+        }
+    } else {
+        LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f}", outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT);
+    }
+#else
     LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f}", outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT);
+#endif
     return true;
 #endif
 }
