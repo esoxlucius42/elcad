@@ -467,16 +467,12 @@ std::vector<int> Renderer::expandFaceSelection(Body* body, int startTri, float a
     int triCount = static_cast<int>(mesh->triangleCount() / 3);
     if (startTri < 0 || startTri >= triCount) return result;
 
-    // Reference normal and plane
-    QVector3D refN = mesh->triangleNormal(startTri);
-    size_t base = static_cast<size_t>(startTri) * 3;
     const auto& pv = mesh->pickVertices();
     const auto& pi = mesh->pickIndices();
-    QVector3D v0 = pv[pi[base+0]];
     float angleTolRad = qDegreesToRadians(angleDeg);
     float cosAngleTol = std::cos(angleTolRad);
 
-    // BFS
+    // BFS (per-edge/local threshold: compare neighbor normal to current triangle normal)
     std::vector<char> visited(triCount, 0);
     std::vector<int> stack;
     stack.push_back(startTri);
@@ -486,21 +482,26 @@ std::vector<int> Renderer::expandFaceSelection(Body* body, int startTri, float a
         int cur = stack.back(); stack.pop_back();
         result.push_back(cur);
 
+        // current triangle reference normal/plane
+        QVector3D curN = mesh->triangleNormal(cur);
+        size_t curBase = static_cast<size_t>(cur) * 3;
+        QVector3D curV0 = pv[pi[curBase+0]];
+
         for (int nb : neighbors[cur]) {
             if (nb < 0 || nb >= triCount) continue;
             if (visited[nb]) continue;
 
             QVector3D n = mesh->triangleNormal(nb);
-            // angle via dot product (normals are unit)
-            float d = QVector3D::dotProduct(refN, n);
+            // angle via dot product (normals are unit) using current triangle normal
+            float d = QVector3D::dotProduct(curN, n);
             if (d < cosAngleTol) continue;
 
-            // plane distance check: compute neighbor triangle vertices and max distance to ref plane
+            // plane distance check: compute neighbor triangle vertices and max distance to current tri plane
             size_t b2 = static_cast<size_t>(nb) * 3;
             QVector3D va = pv[pi[b2+0]];
             QVector3D vb = pv[pi[b2+1]];
             QVector3D vc = pv[pi[b2+2]];
-            auto distToPlane = [&](const QVector3D& p){ return qAbs(QVector3D::dotProduct(p - v0, refN)); };
+            auto distToPlane = [&](const QVector3D& p){ return qAbs(QVector3D::dotProduct(p - curV0, curN)); };
             float maxd = std::max({distToPlane(va), distToPlane(vb), distToPlane(vc)});
             if (maxd > distanceTol) continue;
 
