@@ -361,6 +361,10 @@ void ViewportWidget::handlePickClick(QPoint pos, bool addToSelection)
 
     QVector3D ro, rd;
     m_camera.unprojectRay(pos.x(), pos.y(), width(), height(), ro, rd);
+    // Use camera position as ray origin for perspective views so the ray starts
+    // outside the scene and intersects the entry surface rather than an exit
+    // intersection when the near-plane point lies inside geometry.
+    if (m_camera.isPerspective()) ro = m_camera.position();
 
     Document::SelectedItem hitItem;
     bool hit = m_renderer.pickHit(ro, rd, m_document, hitItem);
