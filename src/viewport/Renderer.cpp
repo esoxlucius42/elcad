@@ -529,24 +529,9 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
     item.type = Document::SelectedItem::Type::Body;
 
     if (bestTri >= 0) {
-        float alpha = 1.0f - bestU - bestV;
-        const float vertexEps = 1e-3f;
-        const float edgeEps = 0.02f;
-
-        if (alpha > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 0; }
-        else if (bestU > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 1; }
-        else if (bestV > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 2; }
-        else if (alpha < edgeEps || bestU < edgeEps || bestV < edgeEps) {
-            item.type = Document::SelectedItem::Type::Edge;
-            int edgeLocal = 0;
-            if (alpha < edgeEps) edgeLocal = 0;
-            else if (bestU < edgeEps) edgeLocal = 1;
-            else edgeLocal = 2;
-            item.index = bestTri * 3 + edgeLocal;
-        } else {
-            item.type = Document::SelectedItem::Type::Face;
-            item.index = bestTri;
-        }
+        // Disable selecting vertices or edges directly — always select the face.
+        item.type = Document::SelectedItem::Type::Face;
+        item.index = bestTri;
     } else {
         // bestTri < 0 means we only detected a bbox-level hit for a large mesh; leave as Body
     }
