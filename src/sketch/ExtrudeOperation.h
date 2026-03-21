@@ -4,6 +4,7 @@
 
 #ifdef ELCAD_HAVE_OCCT
 #include <TopoDS_Shape.hxx>
+#include <TopoDS_Face.hxx>
 #endif
 
 namespace elcad {
@@ -28,6 +29,9 @@ public:
     // If symmetric: extrudes half+half in both directions.
     static ExtrudeResult extrude(const Sketch& sketch,
                                  const ExtrudeParams& params);
+
+    // Extrude an existing OCCT face directly (used when user selects a mesh face)
+    static ExtrudeResult extrudeFace(const TopoDS_Face& face, const ExtrudeParams& params);
 
     // Boolean union of extruded shape into target
     static ExtrudeResult booleanAdd(const TopoDS_Shape& base,

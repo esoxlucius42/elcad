@@ -11,6 +11,9 @@
 #include <BRepAlgoAPI_Fuse.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRep_Tool.hxx>
+#include <Poly_Triangulation.hxx>
+#include <TopLoc_Location.hxx>
 #include <gp_Vec.hxx>
 #include <gp_Trsf.hxx>
 #include <BRepCheck_Analyzer.hxx>
@@ -95,6 +98,83 @@ ExtrudeResult ExtrudeOperation::extrude(const Sketch& sketch,
                   "symmetric={} normal=({:.3f},{:.3f},{:.3f}) entities={}",
                   e.GetMessageString(), d, params.symmetric,
                   n.x(), n.y(), n.z(), sketch.entities().size());
+    }
+
+    return result;
+}
+
+// Extrude an existing TopoDS_Face directly. Uses face triangulation (if available) to
+// estimate a normal for extrusion. Returns an error if the face has no triangulation.
+ExtrudeResult ExtrudeOperation::extrudeFace(const TopoDS_Face& face, const ExtrudeParams& params)
+{
+    ExtrudeResult result;
+
+    LOG_INFO("ExtrudeOperation::extrudeFace — distance={:.4f} mode={} symmetric={}",
+             params.distance, params.mode, params.symmetric);
+
+    try {
+        // Attempt to obtain a triangulation for a robust normal estimate
+        TopLoc_Location loc;
+        Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+        if (tri.IsNull()) {
+            result.errorMsg = "Face has no triangulation — please tessellate the shape first.";
+            LOG_ERROR("extrudeFace failed — no triangulation available for face");
+            return result;
+        }
+
+        // Use the first triangle to estimate a consistent normal direction
+        Standard_Integer n1, n2, n3;
+        tri->Triangle(1).Get(n1, n2, n3);
+        gp_Pnt p1 = tri->Node(n1).Transformed(loc);
+        gp_Pnt p2 = tri->Node(n2).Transformed(loc);
+        gp_Pnt p3 = tri->Node(n3).Transformed(loc);
+        gp_Vec e1(p1, p2), e2(p1, p3);
+        gp_Vec n = e1.Crossed(e2);
+        double len = n.Magnitude();
+        if (len < 1e-12) {
+            result.errorMsg = "Could not determine face normal (degenerate triangulation).";
+            LOG_ERROR("extrudeFace failed — degenerate triangulation with near-zero normal");
+            return result;
+        }
+        n /= len;
+
+        double d = params.distance;
+        if (params.symmetric) {
+            gp_Vec back(-n.X() * d * 0.5, -n.Y() * d * 0.5, -n.Z() * d * 0.5);
+            gp_Trsf trsf;
+            trsf.SetTranslation(back);
+            BRepBuilderAPI_Transform mover(face, trsf, true);
+            BRepPrimAPI_MakePrism prism(mover.Shape(), gp_Vec(n.X() * d, n.Y() * d, n.Z() * d));
+            if (!prism.IsDone()) {
+                result.errorMsg = "BRepPrimAPI_MakePrism failed (extrudeFace symmetric)";
+                LOG_ERROR("extrudeFace (symmetric) failed — prism::IsDone returned false");
+                return result;
+            }
+            result.shape = prism.Shape();
+        } else {
+            gp_Vec vec(n.X() * d, n.Y() * d, n.Z() * d);
+            BRepPrimAPI_MakePrism prism(face, vec);
+            if (!prism.IsDone()) {
+                result.errorMsg = "BRepPrimAPI_MakePrism failed (extrudeFace)";
+                LOG_ERROR("extrudeFace failed — prism::IsDone returned false");
+                return result;
+            }
+            result.shape = prism.Shape();
+        }
+
+        BRepCheck_Analyzer check(result.shape);
+        if (!check.IsValid()) {
+            result.errorMsg = "Extruded shape is invalid (topology error)";
+            LOG_ERROR("extrudeFace failed — BRepCheck_Analyzer reports invalid topology");
+            result.shape = TopoDS_Shape();
+            return result;
+        }
+
+        result.success = true;
+        LOG_INFO("extrudeFace succeeded — distance={:.4f} symmetric={}", d, params.symmetric);
+    } catch (const Standard_Failure& e) {
+        result.errorMsg = QString("OCCT exception: %1").arg(e.GetMessageString());
+        LOG_ERROR("extrudeFace threw OCCT exception: '{}'", e.GetMessageString());
     }
 
     return result;

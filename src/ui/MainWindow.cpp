@@ -41,6 +41,9 @@
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <gp_Ax2.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS.hxx>
 #endif
 
 namespace elcad {
@@ -466,16 +469,28 @@ void MainWindow::updateSketchToolButtons(int activeId)
 void MainWindow::onExtrude()
 {
 #ifdef ELCAD_HAVE_OCCT
-    // Need an active sketch with geometry
+    // Support extruding either from an active sketch OR from a selected mesh face
     Sketch* sketch = m_document->activeSketch();
+    bool faceExtrude = false;
+    Body* faceBody = nullptr;
+    int  faceTriIndex = -1;
+
     if (!sketch) {
-        // Try last completed sketch
-        if (m_document->sketches().empty()) {
-            LOG_WARN("Extrude: no sketch available — user notified");
-            QMessageBox::warning(this, "Extrude", "No sketch available.\nCreate a sketch first.");
-            return;
+        // If no sketch, check if the user has selected exactly one face
+        auto sel = m_document->selectionItems();
+        if (sel.size() == 1 && sel[0].type == Document::SelectedItem::Type::Face) {
+            faceExtrude = true;
+            faceBody = m_document->bodyById(sel[0].bodyId);
+            faceTriIndex = sel[0].index;
+        } else {
+            // Try last completed sketch as before
+            if (m_document->sketches().empty()) {
+                LOG_WARN("Extrude: no sketch available and no face selected — user notified");
+                QMessageBox::warning(this, "Extrude", "No sketch available and no face selected.\nCreate a sketch or select a face first.");
+                return;
+            }
+            sketch = m_document->sketches().back().get();
         }
-        sketch = m_document->sketches().back().get();
     }
 
     ExtrudeDialog dlg(this);
@@ -487,7 +502,42 @@ void MainWindow::onExtrude()
     ExtrudeParams params = dlg.params();
     LOG_INFO("Extrude: distance={:.4f} mode={} symmetric={}",
              params.distance, params.mode, params.symmetric);
-    ExtrudeResult res = ExtrudeOperation::extrude(*sketch, params);
+
+    ExtrudeResult res;
+    Body* targetBody = nullptr;
+
+    if (faceExtrude) {
+        if (!faceBody || !faceBody->hasShape()) {
+            LOG_ERROR("Extrude: face's owning body is invalid");
+            QMessageBox::critical(this, "Extrude Failed", "Selected face's body is invalid.");
+            return;
+        }
+
+        int faceOrd = m_viewport->renderer().faceOrdinalForTriangle(faceBody, faceTriIndex);
+        if (faceOrd < 0) {
+            LOG_ERROR("Extrude: could not map triangle to face ordinal");
+            QMessageBox::critical(this, "Extrude Failed", "Could not determine face for selected triangle.");
+            return;
+        }
+
+        // Extract the TopoDS_Face corresponding to the ordinal
+        TopoDS_Face occtFace;
+        int idx = 0;
+        for (TopExp_Explorer exp(faceBody->shape(), TopAbs_FACE); exp.More(); exp.Next(), ++idx) {
+            if (idx == faceOrd) { occtFace = TopoDS::Face(exp.Current()); break; }
+        }
+        if (occtFace.IsNull()) {
+            LOG_ERROR("Extrude: extracted OCCT face is null");
+            QMessageBox::critical(this, "Extrude Failed", "Could not extract OCCT face for extrusion.");
+            return;
+        }
+
+        res = ExtrudeOperation::extrudeFace(occtFace, params);
+        targetBody = faceBody;
+    } else {
+        res = ExtrudeOperation::extrude(*sketch, params);
+        targetBody = m_document->singleSelectedBody();
+    }
 
     if (!res.success) {
         LOG_ERROR("Extrude failed: {}", res.errorMsg.toStdString());
@@ -495,9 +545,7 @@ void MainWindow::onExtrude()
         return;
     }
 
-    Body* selectedBody = m_document->singleSelectedBody();
-
-    if (params.mode == 0 || !selectedBody || !selectedBody->hasShape()) {
+    if (params.mode == 0 || !targetBody || !targetBody->hasShape()) {
         // New body — already added; redo just re-inserts it after an undo
         Body* b = m_document->addBody("Extrusion");
         b->setShape(res.shape);
@@ -515,7 +563,7 @@ void MainWindow::onExtrude()
             }));
     } else {
         // Add or Remove using boolean
-        TopoDS_Shape oldShape = selectedBody->shape();
+        TopoDS_Shape oldShape = targetBody->shape();
         ExtrudeResult boolRes;
         if (params.mode == 1)
             boolRes = ExtrudeOperation::booleanAdd(oldShape, res.shape);
@@ -532,14 +580,14 @@ void MainWindow::onExtrude()
         TopoDS_Shape newShape = boolRes.shape;
         m_document->undoStack().push(std::make_unique<LambdaCommand>(
             params.mode == 1 ? "Extrude Add" : "Extrude Remove",
-            [this, id = selectedBody->id(), oldShape]() {
+            [this, id = targetBody->id(), oldShape]() {
                 if (Body* b = m_document->bodyById(id)) {
                     b->setShape(oldShape);
                     m_viewport->renderer().invalidateMesh(id);
                     emit m_document->bodyChanged(b);
                 }
             },
-            [this, id = selectedBody->id(), newShape]() {
+            [this, id = targetBody->id(), newShape]() {
                 if (Body* b = m_document->bodyById(id)) {
                     b->setShape(newShape);
                     m_viewport->renderer().invalidateMesh(id);
@@ -547,9 +595,9 @@ void MainWindow::onExtrude()
                 }
             }));
 
-        selectedBody->setShape(newShape);
-        m_viewport->renderer().invalidateMesh(selectedBody->id());
-        emit m_document->bodyChanged(selectedBody);
+        targetBody->setShape(newShape);
+        m_viewport->renderer().invalidateMesh(targetBody->id());
+        emit m_document->bodyChanged(targetBody);
     }
 
     if (m_document->activeSketch())

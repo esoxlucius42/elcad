@@ -549,6 +549,19 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
 #endif
 }
 
+int Renderer::faceOrdinalForTriangle(Body* body, int triIndex)
+{
+#ifndef ELCAD_HAVE_OCCT
+    Q_UNUSED(body); Q_UNUSED(triIndex);
+    return -1;
+#else
+    if (!body) return -1;
+    MeshBuffer* mesh = getMeshBuffer(body);
+    if (!mesh) return -1;
+    return mesh->faceOrdinalForTriangle(triIndex);
+#endif
+}
+
 
 std::vector<int> Renderer::expandFaceSelection(Body* body, int startTri, float angleDeg, float distanceTol)
 {

@@ -78,9 +78,21 @@ private:
     std::vector<int>          m_triOrder;        // triangle index -> order
     std::vector<QVector3D>    m_triCentroids;
 
+    // Triangle -> source face ordinal (face index in the TopoDS_Shape iteration)
+    std::vector<int>          m_triFaceIndices;
+
     // Cached triangle adjacency (triangle index -> neighbor triangle indices)
     std::vector<std::vector<int>> m_triNeighbors;
 
+public:
+    // Return the face ordinal (0-based) corresponding to a triangle index, or -1 if unknown
+    int faceOrdinalForTriangle(int triIdx) const {
+        if (triIdx < 0) return -1;
+        if (static_cast<size_t>(triIdx) >= m_triFaceIndices.size()) return -1;
+        return m_triFaceIndices[triIdx];
+    }
+
+private:
     // Simple binary BVH for accelerating ray-triangle queries
     struct BVHNode {
         QVector3D bmin;

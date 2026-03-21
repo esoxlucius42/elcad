@@ -57,6 +57,10 @@ void MeshBuffer::build(const TopoDS_Shape& shape, float deflection)
     // Tessellate
     BRepMesh_IncrementalMesh mesh(shape, deflection, Standard_False, 0.5, Standard_True);
 
+    // Triangle -> face mapping reset
+    m_triFaceIndices.clear();
+    int faceOrdinal = 0;
+
     std::vector<Vertex>       verts;
     std::vector<unsigned int> triIndices;
     std::vector<unsigned int> edgeIndices;
@@ -126,7 +130,10 @@ void MeshBuffer::build(const TopoDS_Shape& shape, float deflection)
             triIndices.push_back(baseIdx + n1 - 1);
             triIndices.push_back(baseIdx + n2 - 1);
             triIndices.push_back(baseIdx + n3 - 1);
+            // Record which source face this triangle came from (face ordinal in iteration)
+            m_triFaceIndices.push_back(faceOrdinal);
         }
+        ++faceOrdinal;
     }
 
     // ── Edges → lines ────────────────────────────────────────────────────────

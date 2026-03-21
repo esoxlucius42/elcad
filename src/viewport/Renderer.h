@@ -39,6 +39,9 @@ public:
     // Ray-pick detailed: returns the closest visible hit (body/face/edge/vertex). If hit, outHit is filled and true returned.
     bool pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc, Document::SelectedItem& outHit);
 
+    // Return the face ordinal (0-based) for a given triangle index in a body, or -1 if unknown
+    int faceOrdinalForTriangle(Body* body, int triIndex);
+
     // Expand a clicked triangle into a connected coplanar set. Returns triangle indices.
     std::vector<int> expandFaceSelection(Body* body, int startTri, float angleDeg = 10.0f, float distanceTol = 1e-3f);
 
