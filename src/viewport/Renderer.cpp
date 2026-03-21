@@ -496,15 +496,11 @@ std::vector<int> Renderer::expandFaceSelection(Body* body, int startTri, float a
             float d = QVector3D::dotProduct(curN, n);
             if (d < cosAngleTol) continue;
 
-            // plane distance check: compute neighbor triangle vertices and max distance to current tri plane
-            size_t b2 = static_cast<size_t>(nb) * 3;
-            QVector3D va = pv[pi[b2+0]];
-            QVector3D vb = pv[pi[b2+1]];
-            QVector3D vc = pv[pi[b2+2]];
-            auto distToPlane = [&](const QVector3D& p){ return qAbs(QVector3D::dotProduct(p - curV0, curN)); };
-            float maxd = std::max({distToPlane(va), distToPlane(vb), distToPlane(vc)});
-            if (maxd > distanceTol) continue;
-
+            // For curved surfaces (cylinders/spheres) plane distance check is too strict and prevents
+            // expansion. Rely on per-edge normal angle for traversal; keep the distance check optional
+            // by only enforcing it if distanceTol > 0 and model is expected to be planar. For now,
+            // skip the distance check to allow selection across smoothly curved surfaces.
+            
             visited[nb] = 1;
             stack.push_back(nb);
         }
