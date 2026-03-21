@@ -685,8 +685,11 @@ bool Renderer::pickHitAt(int px, int py, Document* doc, Camera& camera, Document
         return true;
     }
 
-    // Fallback to original ray-based pick
-    return pickHit(rayOrigin, rayDir, doc, outHit);
+    // Do NOT fall back to broad AABB-based pick here — prefer no selection when
+    // no per-triangle hit is found under the cursor. This avoids selecting nearby
+    // bodies when clicking empty space.
+    LOG_DEBUG("pickHitAt: no per-triangle hit near pixel px={},py={}", px, py);
+    return false;
 #endif
 }
 
