@@ -40,7 +40,7 @@ public:
     bool pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc, Document::SelectedItem& outHit);
 
     // Expand a clicked triangle into a connected coplanar set. Returns triangle indices.
-    std::vector<int> expandFaceSelection(Body* body, int startTri, float angleDeg = 2.0f, float distanceTol = 1e-3f);
+    std::vector<int> expandFaceSelection(Body* body, int startTri, float angleDeg = 10.0f, float distanceTol = 1e-3f);
 
 
     bool gridVisible() const     { return m_gridVisible; }

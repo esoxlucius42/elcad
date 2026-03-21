@@ -376,7 +376,7 @@ void ViewportWidget::handlePickClick(QPoint pos, bool addToSelection)
         Body* b = m_document->bodyById(hitItem.bodyId);
         if (b) {
             // Use renderer to expand selection
-            float angleDeg = 2.0f; // TODO: make configurable
+            float angleDeg = 10.0f; // increased per-edge threshold for curved surfaces
             float distanceTol = 1e-3f;
             auto tris = m_renderer.expandFaceSelection(b, hitItem.index, angleDeg, distanceTol);
 
