@@ -263,9 +263,9 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
                                      quint64 hoveredEntityId,
                                      const std::vector<quint64>& selectedEntityIds,
                                      int hoveredAreaIndex,
-                                     quint64 hoveredCircleEntityId,
+                                     quint64 /*hoveredCircleEntityId*/,
                                      const std::vector<int>& selectedAreaIndices,
-                                     const std::vector<quint64>& selectedCircleEntityIds)
+                                     const std::vector<quint64>& /*selectedCircleEntityIds*/)
 {
     if (!m_initialized) return;
 
@@ -279,58 +279,79 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
         return std::find(selectedAreaIndices.begin(), selectedAreaIndices.end(), idx)
                != selectedAreaIndices.end();
     };
-    auto isCircleAreaSelected = [&](quint64 id) {
-        return std::find(selectedCircleEntityIds.begin(), selectedCircleEntityIds.end(), id)
-               != selectedCircleEntityIds.end();
-    };
 
     // ── Collect entity lines ──────────────────────────────────────────────────
     LineList normal, hovered, selected;
 
+    // Lines: render flattened sub-segments so intersection points are visible
+    // and all sub-segments of a hovered/selected entity are styled together.
+    auto flatSegs = SketchPicker::flattenSegments(sketch);
+    for (const auto& fs : flatSegs) {
+        bool sel = isEntitySelected(fs.entityId);
+        bool hov = (fs.entityId == hoveredEntityId);
+        LineList& out = hov ? hovered : sel ? selected : normal;
+        out.push_back(plane.to3D(fs.a));
+        out.push_back(plane.to3D(fs.b));
+    }
+
+    // Circles and arcs: unchanged (not part of segment flattening).
     for (const auto& ep : sketch.entities()) {
         const SketchEntity& e = *ep;
         if (e.construction) continue;
-
-        bool sel = isEntitySelected(e.id);
-        bool hov = (e.id == hoveredEntityId);
-
-        LineList& out = hov ? hovered : sel ? selected : normal;
-
-        if (e.type == SketchEntity::Line) {
-            out.push_back(plane.to3D(e.p0.x, e.p0.y));
-            out.push_back(plane.to3D(e.p1.x, e.p1.y));
-        } else if (e.type == SketchEntity::Circle) {
-            addCircleLines(e.p0.toVec(), e.radius, plane, out);
-        } else if (e.type == SketchEntity::Arc) {
-            addCircleLines(e.p0.toVec(), e.radius, plane, out, e.startAngle, e.endAngle);
+        if (e.type == SketchEntity::Circle || e.type == SketchEntity::Arc) {
+            bool sel = isEntitySelected(e.id);
+            bool hov = (e.id == hoveredEntityId);
+            LineList& out = hov ? hovered : sel ? selected : normal;
+            if (e.type == SketchEntity::Circle)
+                addCircleLines(e.p0.toVec(), e.radius, plane, out);
+            else
+                addCircleLines(e.p0.toVec(), e.radius, plane, out, e.startAngle, e.endAngle);
         }
     }
 
-    // ── Collect endpoint dots (small cross markers at line endpoints) ─────────
+    // ── Collect endpoint dots (cross markers at all unique flat-segment nodes) ─
+    // This includes original endpoints AND derived intersection points.
     LineList dots;
-    constexpr float kDotSize = 1.5f;  // mm, half-arm length of the cross
-    for (const auto& ep : sketch.entities()) {
-        const SketchEntity& e = *ep;
-        if (e.construction) continue;
-        if (e.type != SketchEntity::Line) continue;
-
-        auto addDot = [&](QVector2D p) {
-            dots.push_back(plane.to3D(p + QVector2D(-kDotSize, 0)));
-            dots.push_back(plane.to3D(p + QVector2D( kDotSize, 0)));
-            dots.push_back(plane.to3D(p + QVector2D(0, -kDotSize)));
-            dots.push_back(plane.to3D(p + QVector2D(0,  kDotSize)));
-        };
-        addDot(e.p0.toVec());
-        addDot(e.p1.toVec());
+    constexpr float kDotSize = 1.5f;
+    std::vector<QVector2D> dotNodes;
+    auto addDot = [&](QVector2D p) {
+        for (const auto& n : dotNodes)
+            if ((n - p).lengthSquared() < 0.25f) return;  // already added (0.5mm snap)
+        dotNodes.push_back(p);
+        dots.push_back(plane.to3D(p + QVector2D(-kDotSize, 0)));
+        dots.push_back(plane.to3D(p + QVector2D( kDotSize, 0)));
+        dots.push_back(plane.to3D(p + QVector2D(0, -kDotSize)));
+        dots.push_back(plane.to3D(p + QVector2D(0,  kDotSize)));
+    };
+    for (const auto& fs : flatSegs) {
+        addDot(fs.a);
+        addDot(fs.b);
     }
 
     // ── Collect area fills ────────────────────────────────────────────────────
-    // Fan-triangulate closed polygon loops from centroid.
+    // All area fills are polygon loops (circles/arcs included via approximation).
+    // For nested faces (e.g. circle inside rectangle), subtract inner faces from
+    // the outer face's fill by overpainting with the background colour.
     std::vector<QVector3D> hoveredFill, selectedFill;
+    // Background-colour triangles that "erase" inner loop fills from outer ones.
+    std::vector<QVector3D> fillHoles;
 
-    // Closed line loops
     auto loops = SketchPicker::findClosedLoops(sketch);
-    for (int i = 0; i < static_cast<int>(loops.size()); ++i) {
+    int  nLoops = static_cast<int>(loops.size());
+
+    // Pre-compute polygon areas (reused for both fill-generation and hole-detection).
+    std::vector<float> loopArea(nLoops, 0.f);
+    for (int i = 0; i < nLoops; ++i) {
+        int n = static_cast<int>(loops[i].polygon.size());
+        for (int k = 0; k < n; ++k) {
+            QVector2D a = loops[i].polygon[k];
+            QVector2D b = loops[i].polygon[(k + 1) % n];
+            loopArea[i] += a.x() * b.y() - b.x() * a.y();
+        }
+        loopArea[i] = std::abs(loopArea[i]) * 0.5f;
+    }
+
+    for (int i = 0; i < nLoops; ++i) {
         const auto& poly = loops[i].polygon;
         if (poly.size() < 3) continue;
 
@@ -338,7 +359,7 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
         bool isSel = isAreaSelected(i);
         if (!isHov && !isSel) continue;
 
-        // Centroid
+        // Fan-triangulate from centroid.
         QVector2D centroid{};
         for (const auto& v : poly) centroid += v;
         centroid /= static_cast<float>(poly.size());
@@ -351,27 +372,26 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
             fillOut.push_back(plane.to3D(a));
             fillOut.push_back(plane.to3D(b));
         }
-    }
 
-    // Circle areas
-    constexpr int kCircleFillSegs = 32;
-    for (const auto& ep : sketch.entities()) {
-        const SketchEntity& e = *ep;
-        if (e.construction || e.type != SketchEntity::Circle) continue;
-
-        bool isHov = (e.id == hoveredCircleEntityId);
-        bool isSel = isCircleAreaSelected(e.id);
-        if (!isHov && !isSel) continue;
-
-        auto& fillOut = isSel ? selectedFill : hoveredFill;
-        QVector2D center = e.p0.toVec();
-        float r = e.radius;
-        for (int j = 0; j < kCircleFillSegs; ++j) {
-            float a0 = float(j)     / kCircleFillSegs * 2.f * float(M_PI);
-            float a1 = float(j + 1) / kCircleFillSegs * 2.f * float(M_PI);
-            fillOut.push_back(plane.to3D(center));
-            fillOut.push_back(plane.to3D(center + QVector2D(r * qCos(a0), r * qSin(a0))));
-            fillOut.push_back(plane.to3D(center + QVector2D(r * qCos(a1), r * qSin(a1))));
+        // Punch out any smaller loops that are entirely contained within this one.
+        // This handles circles-inside-rectangles, arcs-inside-polygons, etc.
+        for (int j = 0; j < nLoops; ++j) {
+            if (j == i || loops[j].polygon.empty()) continue;
+            if (loopArea[j] >= loopArea[i]) continue;  // only punch out smaller loops
+            // A loop is "inside" this one if its first vertex is inside our polygon.
+            if (!SketchPicker::pointInPolygon(loops[j].polygon[0], poly)) continue;
+            // Build the inner-loop centroid and fan-triangulate into fillHoles.
+            QVector2D ic{};
+            for (const auto& v : loops[j].polygon) ic += v;
+            ic /= static_cast<float>(loops[j].polygon.size());
+            int jn = static_cast<int>(loops[j].polygon.size());
+            for (int k = 0; k < jn; ++k) {
+                QVector2D a = loops[j].polygon[k];
+                QVector2D b = loops[j].polygon[(k + 1) % jn];
+                fillHoles.push_back(plane.to3D(ic));
+                fillHoles.push_back(plane.to3D(a));
+                fillHoles.push_back(plane.to3D(b));
+            }
         }
     }
 
@@ -379,11 +399,16 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
     glDisable(GL_DEPTH_TEST);  // always on top of 3D bodies
     glLineWidth(1.2f);
 
-    // Area fills (drawn first, behind lines)
+    // Area fills (drawn first, behind lines).
+    // Draw order: polygon fills → erase inner nested loops → (nothing else needed).
+    // Holes are overdrawn with the known background colour (#333333 = 0.2,0.2,0.2)
+    // since drawTriangles uses fake transparency blended against that colour.
     if (!hoveredFill.empty())
         drawTriangles(hoveredFill,  {0.27f, 0.60f, 0.85f}, 0.18f, view, proj);
     if (!selectedFill.empty())
         drawTriangles(selectedFill, {1.00f, 0.75f, 0.10f}, 0.18f, view, proj);
+    if (!fillHoles.empty())
+        drawTriangles(fillHoles,    {0.20f, 0.20f, 0.20f}, 1.00f, view, proj);
 
     // Entity lines: muted blue (#4488BB)
     drawLines(normal,   {0.27f, 0.53f, 0.73f}, view, proj);
