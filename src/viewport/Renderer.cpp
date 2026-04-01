@@ -119,6 +119,7 @@ void Renderer::render(Camera& camera, Document* doc,
         const auto& selection = doc->selectionItems();
 
         for (const auto& sketchPtr : doc->sketches()) {
+            if (!sketchPtr->visible()) continue;
             quint64 hoveredEntityId        = 0;
             int     hoveredAreaIndex       = -1;
             quint64 hoveredCircleEntityId  = 0;

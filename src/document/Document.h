@@ -67,18 +67,24 @@ public:
 
     const std::vector<std::unique_ptr<Sketch>>& sketches() const { return m_sketches; }
 
+    void setSketchVisible(quint64 id, bool visible);
+
 signals:
     void bodyAdded(Body* body);
     void bodyRemoved(quint64 id);
     void bodyChanged(Body* body);   // geometry/mesh changed
     void selectionChanged();
     void activeSketchChanged(Sketch* sketch);  // nullptr when sketch ended
+    void sketchAdded(Sketch* sketch);
+    void sketchRemoved(quint64 id);
+    void sketchVisibilityChanged(Sketch* sketch);
 
 private:
     std::vector<std::unique_ptr<Body>>   m_bodies;
     std::unique_ptr<UndoStack>           m_undoStack;
     std::unique_ptr<Sketch>              m_activeSketch;
     std::vector<std::unique_ptr<Sketch>> m_sketches;
+    int                                  m_nextSketchNumber{1};
 
     // Current selection (mixed types allowed)
     std::vector<SelectedItem>            m_selection;

@@ -16,6 +16,12 @@ public:
 
     quint64 id() const { return m_id; }
 
+    const QString& name() const    { return m_name; }
+    void           setName(const QString& n) { m_name = n; }
+
+    bool visible() const           { return m_visible; }
+    void setVisible(bool v)        { m_visible = v; }
+
     const SketchPlane& plane() const { return m_plane; }
 
     // Entity creation helpers
@@ -47,6 +53,8 @@ signals:
 
 private:
     quint64      m_id;
+    QString      m_name;
+    bool         m_visible{true};
     SketchPlane  m_plane;
     std::vector<std::unique_ptr<SketchEntity>>    m_entities;
     std::vector<std::unique_ptr<SketchConstraint>> m_constraints;

@@ -96,6 +96,8 @@ MainWindow::MainWindow(QWidget* parent)
             m_viewport, [this](quint64) { m_viewport->update(); });
     connect(m_document.get(), &Document::selectionChanged,
             m_viewport, [this]() { m_viewport->update(); });
+    connect(m_document.get(), &Document::sketchVisibilityChanged,
+            m_viewport, [this](Sketch*) { m_viewport->update(); });
 
     connect(m_document.get(), &Document::activeSketchChanged,
             this, [this](Sketch* sketch) {
@@ -291,7 +293,7 @@ void MainWindow::setupRibbon()
 void MainWindow::setupDocks()
 {
     // Left dock — body list
-    auto* leftDock = new QDockWidget("Bodies", this);
+    auto* leftDock = new QDockWidget("Scene", this);
     leftDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     leftDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
 
@@ -623,6 +625,10 @@ void MainWindow::onExtrude()
 
     if (m_document->activeSketch())
         exitSketch();
+
+    // Hide the sketch that was used for this extrude
+    if (!faceExtrude && sketch)
+        m_document->setSketchVisible(sketch->id(), false);
 #else
     QMessageBox::information(this, "Extrude", "OCCT not available.");
 #endif

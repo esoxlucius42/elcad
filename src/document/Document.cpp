@@ -175,6 +175,7 @@ Sketch* Document::beginSketch(const SketchPlane& plane)
 {
     LOG_INFO("Document: sketch started on plane '{}'", plane.name().toStdString());
     m_activeSketch = std::make_unique<Sketch>(plane, this);
+    m_activeSketch->setName(QString::asprintf("Sketch%02d", m_nextSketchNumber++));
     emit activeSketchChanged(m_activeSketch.get());
     return m_activeSketch.get();
 }
@@ -186,6 +187,7 @@ void Document::endSketch()
              m_activeSketch->entities().size());
     m_sketches.push_back(std::move(m_activeSketch));
     emit activeSketchChanged(nullptr);
+    emit sketchAdded(m_sketches.back().get());
 }
 
 void Document::reactivateSketch(Sketch* sketch)
@@ -198,9 +200,12 @@ void Document::reactivateSketch(Sketch* sketch)
         return;
     }
     // Push any currently active sketch back to the completed list.
-    if (m_activeSketch)
+    if (m_activeSketch) {
         m_sketches.push_back(std::move(m_activeSketch));
+        emit sketchAdded(m_sketches.back().get());
+    }
 
+    emit sketchRemoved((*it)->id());
     m_activeSketch = std::move(*it);
     m_sketches.erase(it);
 
@@ -214,6 +219,14 @@ Sketch* Document::sketchById(quint64 id) const
     for (auto& s : m_sketches)
         if (s->id() == id) return s.get();
     return nullptr;
+}
+
+void Document::setSketchVisible(quint64 id, bool visible)
+{
+    if (Sketch* s = sketchById(id)) {
+        s->setVisible(visible);
+        emit sketchVisibilityChanged(s);
+    }
 }
 
 } // namespace elcad
