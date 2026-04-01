@@ -39,6 +39,11 @@ public:
     // True once the tool has finished its work (one entity placed).
     bool isDone() const { return m_done; }
 
+    // True while the tool has an operation in progress (e.g. first point of a
+    // line has been set but the second hasn't been clicked yet).  When false the
+    // tool is idle and RMB should be allowed to pass through for view orbit.
+    virtual bool isInProgress() const { return false; }
+
     // Reset tool to initial state (for re-use after placing one entity).
     virtual void reset() { m_done = false; }
 

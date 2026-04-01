@@ -17,6 +17,8 @@ public:
     QString statusHint() const override;
     std::vector<SketchEntity> previewEntities() const override;
 
+    bool isInProgress() const override { return m_state == WaitingCorner2; }
+
     void reset() override;
 
 private:

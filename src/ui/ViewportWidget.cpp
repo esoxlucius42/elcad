@@ -133,8 +133,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
             update();
             return;
         }
-        // RMB in sketch mode with tool: cancel tool
-        if (e->button() == Qt::RightButton && m_activeTool) {
+        // RMB in sketch mode with tool: cancel operation only if tool is mid-operation.
+        // If the tool is idle, fall through to let RMB orbit the view.
+        if (e->button() == Qt::RightButton && m_activeTool->isInProgress()) {
             QVector2D rawPos = screenToSketch(e->pos());
             m_activeTool->onMousePress(rawPos, e->buttons(), e->modifiers());
             update();
@@ -147,8 +148,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         m_dragMode = DragMode::Orbit;
         m_camera.orbitBegin(e->pos());
     } else if (e->button() == Qt::RightButton && m_sketch) {
-        // In sketch mode, RMB orbits if no tool active
-        if (!m_activeTool) {
+        // In sketch mode, RMB orbits when no tool is in progress
+        if (!m_activeTool || !m_activeTool->isInProgress()) {
             m_dragMode = DragMode::Orbit;
             m_camera.orbitBegin(e->pos());
         }
@@ -502,6 +503,17 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
     }
 
     switch (e->key()) {
+    // ── Sketch tool shortcuts (only active when in sketch mode) ───────────────
+    case Qt::Key_L:
+        if (m_sketch) { emit requestSketchTool(1); break; }
+        break;
+    case Qt::Key_W:
+        if (m_sketch) { emit requestSketchTool(2); break; }
+        break;
+    case Qt::Key_C:
+        if (m_sketch) { emit requestSketchTool(3); break; }
+        break;
+    // ── 3D gizmo mode shortcuts ───────────────────────────────────────────────
     case Qt::Key_T:
         m_renderer.gizmo().setMode(GizmoMode::Translate);
         LOG_DEBUG("Viewport: gizmo mode → Translate");
@@ -542,8 +554,13 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
     }
     case Qt::Key_Escape:
         if (m_sketch) {
-            // In sketch mode: Esc with no in-progress tool action → exit sketch
-            emit requestExitSketch();
+            if (m_activeTool) {
+                // First Esc deactivates the current drawing tool → back to selection
+                emit requestSketchTool(0);
+            } else {
+                // No tool active: Esc exits sketch
+                emit requestExitSketch();
+            }
         } else if (m_document) {
             m_document->clearSelection();
             // Document::clearSelection already emits selectionChanged

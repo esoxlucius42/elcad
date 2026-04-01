@@ -47,8 +47,9 @@ public:
 signals:
     void cursorWorldPos(float x, float y, float z);
     void sketchCursorPos(float u, float v);  // sketch-plane 2D coords
-    void requestExitSketch();                // emitted when Esc pressed with no active tool op
+    void requestExitSketch();                // emitted when Esc pressed with no active tool
     void requestReactivateSketch(Sketch* sketch);  // emitted on double-click over a completed sketch
+    void requestSketchTool(int toolId);      // 0 = selection, 1=Line, 2=Rect, 3=Circle, 4=Constr
     void cameraOrientationChanged(float yaw, float pitch, bool perspective);
 
 public slots:

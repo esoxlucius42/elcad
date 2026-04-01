@@ -113,6 +113,9 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport, &ViewportWidget::requestExitSketch,
             this, &MainWindow::exitSketch);
 
+    connect(m_viewport, &ViewportWidget::requestSketchTool,
+            this, &MainWindow::activateSketchTool);
+
     connect(m_viewport, &ViewportWidget::requestReactivateSketch,
             this, [this](Sketch* sketch) {
         if (!sketch) return;
@@ -121,7 +124,7 @@ MainWindow::MainWindow(QWidget* parent)
         m_document->reactivateSketch(sketch);  // emits activeSketchChanged(sketch)
         if (m_ribbon) m_ribbon->setSketchMode(true);
         m_statusSnap->setText(QString("Plane: %1").arg(sketch->plane().name()));
-        activateSketchTool(1);
+        activateSketchTool(0);  // start in selection mode
     });
 
     LOG_INFO("MainWindow: ready");
@@ -276,14 +279,15 @@ void MainWindow::setupRibbon()
             this, &MainWindow::onBooleanSubtract);
 
     // ── Sketch drawing tools ──────────────────────────────────────────────────
+    // Each button toggles: clicking an already-active tool deactivates it (→ selection mode)
     connect(m_ribbon->btnLine,   &QToolButton::clicked,
-            this, [this]{ activateSketchTool(1); });
+            this, [this]{ activateSketchTool(m_ribbon->btnLine->isChecked()   ? 1 : 0); });
     connect(m_ribbon->btnRect,   &QToolButton::clicked,
-            this, [this]{ activateSketchTool(2); });
+            this, [this]{ activateSketchTool(m_ribbon->btnRect->isChecked()   ? 2 : 0); });
     connect(m_ribbon->btnCircle, &QToolButton::clicked,
-            this, [this]{ activateSketchTool(3); });
+            this, [this]{ activateSketchTool(m_ribbon->btnCircle->isChecked() ? 3 : 0); });
     connect(m_ribbon->btnConstr, &QToolButton::clicked,
-            this, [this]{ activateSketchTool(4); });
+            this, [this]{ activateSketchTool(m_ribbon->btnConstr->isChecked() ? 4 : 0); });
     connect(m_ribbon->btnExitSketch, &QToolButton::clicked,
             this, &MainWindow::exitSketch);
 }
@@ -398,7 +402,7 @@ void MainWindow::enterSketch(int planeId)
     if (m_ribbon) m_ribbon->setSketchMode(true);
 
     m_statusSnap->setText(QString("Plane: %1").arg(plane.name()));
-    activateSketchTool(1);  // activate Line tool by default
+    activateSketchTool(0);  // start in selection mode — user picks a tool explicitly
 }
 
 void MainWindow::exitSketch()
@@ -427,7 +431,7 @@ void MainWindow::activateSketchTool(int toolId)
     case 2: m_currentTool = std::make_unique<RectTool>(sketch);          break;
     case 3: m_currentTool = std::make_unique<CircleTool>(sketch);        break;
     case 4: m_currentTool = std::make_unique<LineTool>(sketch, true);    break;  // construction
-    default: break;
+    default: break;  // toolId 0 = selection mode, no drawing tool
     }
 
     m_viewport->setActiveTool(m_currentTool.get());
@@ -435,6 +439,8 @@ void MainWindow::activateSketchTool(int toolId)
 
     if (m_currentTool)
         m_statusMode->setText("Sketch | " + m_currentTool->statusHint());
+    else
+        m_statusMode->setText("Sketch | Select");
 }
 
 void MainWindow::updateSketchToolButtons(int activeId)
