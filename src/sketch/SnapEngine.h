@@ -7,7 +7,7 @@ namespace elcad {
 class Sketch;
 
 struct SnapResult {
-    enum Type { None, Grid, Vertex, Midpoint };
+    enum Type { None, Origin, Vertex, Midpoint, Grid };
     QVector2D pos;
     Type      type{None};
 };

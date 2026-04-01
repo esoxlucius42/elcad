@@ -27,6 +27,7 @@ void Renderer::initialize()
     glEnable(GL_LINE_SMOOTH);
 
     m_grid.initialize();
+    m_originMarker.initialize();
     m_phong.load(":/shaders/phong.vert", ":/shaders/phong.frag");
     m_edge.load(":/shaders/edge.vert",   ":/shaders/edge.frag");
     m_sketchRenderer.initialize();
@@ -65,6 +66,8 @@ void Renderer::render(Camera& camera, Document* doc,
 
     if (m_gridVisible)
         m_grid.render(view, proj, camera.nearPlane(), camera.farPlane());
+
+    m_originMarker.render(view, proj);
 
     if (!doc) return;
 

@@ -11,7 +11,18 @@ SnapResult SnapEngine::snap(QVector2D rawPos, const Sketch* sketch,
     SnapResult result;
     result.pos = rawPos;
 
-    // ── Vertex snap (higher priority than grid) ───────────────────────────────
+    // ── Origin snap (highest priority) ───────────────────────────────────────
+    {
+        float d = rawPos.length();
+        if (d < snapThresholdMM) {
+            result.pos  = {0.f, 0.f};
+            result.type = SnapResult::Origin;
+            LOG_TRACE("Snap: origin");
+            return result;
+        }
+    }
+
+    // ── Vertex snap ───────────────────────────────────────────────────────────
     if (m_snapVertex && sketch) {
         float bestDist = snapThresholdMM;
         for (const auto& ep : sketch->entities()) {

@@ -56,6 +56,24 @@ void SketchRenderer::render(const Sketch& sketch,
     addAxisLine({-1000.f, 0.f}, {1000.f, 0.f});  // U axis
     addAxisLine({0.f, -1000.f}, {0.f, 1000.f});  // V axis
 
+    // ── Origin point marker (yellow cross + diamond) ──────────────────────────
+    LineList originMarker;
+    constexpr float kCross    = 4.f;  // mm — cross arm half-length
+    constexpr float kDiamond  = 3.f;  // mm — diamond half-extent
+    originMarker.push_back(plane.to3D({-kCross,     0.f    }));
+    originMarker.push_back(plane.to3D({ kCross,     0.f    }));
+    originMarker.push_back(plane.to3D({  0.f,   -kCross    }));
+    originMarker.push_back(plane.to3D({  0.f,    kCross    }));
+    // diamond
+    originMarker.push_back(plane.to3D({ kDiamond,  0.f    }));
+    originMarker.push_back(plane.to3D({  0.f,    kDiamond  }));
+    originMarker.push_back(plane.to3D({  0.f,    kDiamond  }));
+    originMarker.push_back(plane.to3D({-kDiamond,  0.f    }));
+    originMarker.push_back(plane.to3D({-kDiamond,  0.f    }));
+    originMarker.push_back(plane.to3D({  0.f,   -kDiamond  }));
+    originMarker.push_back(plane.to3D({  0.f,   -kDiamond  }));
+    originMarker.push_back(plane.to3D({ kDiamond,  0.f    }));
+
     // ── Committed entities ────────────────────────────────────────────────────
     for (const auto& ep : sketch.entities())
         addEntityLines(*ep, plane, normal, selected, construction, preview, false);
@@ -79,6 +97,11 @@ void SketchRenderer::render(const Sketch& sketch,
     glLineWidth(1.5f);
 
     drawLines(construction, {0.35f, 0.45f, 0.55f}, view, proj);  // dim blue-grey
+
+    glLineWidth(2.0f);
+    drawLines(originMarker, {1.00f, 1.00f, 0.00f}, view, proj);  // bright yellow
+
+    glLineWidth(1.5f);
     drawLines(normal,       {0.90f, 0.90f, 0.90f}, view, proj);  // near-white
     drawLines(selected,     {1.00f, 0.70f, 0.00f}, view, proj);  // gold
     drawLines(preview,      {0.30f, 0.80f, 1.00f}, view, proj);  // cyan

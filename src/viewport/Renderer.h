@@ -2,6 +2,7 @@
 #include "viewport/Camera.h"
 #include "viewport/Gizmo.h"
 #include "viewport/Grid.h"
+#include "viewport/OriginMarker.h"
 #include "viewport/MeshBuffer.h"
 #include "viewport/ShaderProgram.h"
 #include "sketch/SketchRenderer.h"
@@ -70,6 +71,7 @@ private:
 
 
     Grid           m_grid;
+    OriginMarker   m_originMarker;
     ShaderProgram  m_phong;
     ShaderProgram  m_edge;
     SketchRenderer m_sketchRenderer;
