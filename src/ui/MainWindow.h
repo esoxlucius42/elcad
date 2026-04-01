@@ -28,7 +28,6 @@ private:
     void setupRibbon();
     void setupDocks();
     void setupStatusBar();
-    void createTestScene();
 
     void onImportStep();
     void onExportStep();

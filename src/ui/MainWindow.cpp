@@ -111,7 +111,6 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport, &ViewportWidget::requestExitSketch,
             this, &MainWindow::exitSketch);
 
-    createTestScene();
     LOG_INFO("MainWindow: ready");
 }
 
@@ -349,34 +348,6 @@ void MainWindow::setupDocks()
     // Seed NavCube with the initial camera orientation
     Camera& cam = m_viewport->camera();
     m_navCube->setOrientation(cam.yaw(), cam.pitch(), cam.isPerspective());
-}
-
-// ── Test scene ────────────────────────────────────────────────────────────────
-
-void MainWindow::createTestScene()
-{
-#ifdef ELCAD_HAVE_OCCT
-    // Box 100×60×40 mm
-    {
-        Body* b = m_document->addBody("Box 100×60×40");
-        b->setShape(BRepPrimAPI_MakeBox(100.0, 60.0, 40.0).Shape());
-        b->setColor(QColor(100, 160, 220));
-    }
-    // Cylinder r=25, h=80 mm, offset
-    {
-        Body* b = m_document->addBody("Cylinder r25 h80");
-        gp_Ax2 ax(gp_Pnt(150, 0, 0), gp_Dir(0, 0, 1));
-        b->setShape(BRepPrimAPI_MakeCylinder(ax, 25.0, 80.0).Shape());
-        b->setColor(QColor(220, 140, 80));
-    }
-    // Sphere r=30 mm
-    {
-        Body* b = m_document->addBody("Sphere r30");
-        gp_Ax2 ax(gp_Pnt(-80, 0, 30), gp_Dir(0, 0, 1));
-        b->setShape(BRepPrimAPI_MakeSphere(ax, 30.0).Shape());
-        b->setColor(QColor(120, 200, 120));
-    }
-#endif
 }
 
 // ── Status Bar ────────────────────────────────────────────────────────────────
