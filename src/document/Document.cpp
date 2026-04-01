@@ -104,10 +104,9 @@ void Document::addSelection(const SelectedItem& it)
     if (isSelected(it)) return;
     m_selection.push_back(it);
 
-    // When selecting a whole body, keep legacy flag in Body for UI convenience
-    if (it.type == SelectedItem::Type::Body) {
-        if (Body* b = bodyById(it.bodyId)) b->setSelected(true);
-    }
+    // Mark the owning body as selected for any item type (face, edge, vertex, or body-level).
+    // This ensures the gizmo, edge highlighting, and singleSelectedBody() all work correctly.
+    if (Body* b = bodyById(it.bodyId)) b->setSelected(true);
 
     emit selectionChanged();
 }
@@ -121,6 +120,14 @@ void Document::removeSelection(const SelectedItem& it)
 
     if (it.type == SelectedItem::Type::Body) {
         if (Body* b = bodyById(it.bodyId)) b->setSelected(false);
+    } else {
+        // For sub-item (face/edge/vertex) removal: deselect the body only when it has
+        // no remaining selection items at all.
+        if (Body* b = bodyById(it.bodyId)) {
+            bool stillSelected = std::any_of(m_selection.begin(), m_selection.end(),
+                [&](const SelectedItem& s){ return s.bodyId == it.bodyId; });
+            if (!stillSelected) b->setSelected(false);
+        }
     }
 
     emit selectionChanged();
