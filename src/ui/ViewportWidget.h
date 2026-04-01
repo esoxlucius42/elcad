@@ -3,6 +3,7 @@
 #include "viewport/Gizmo.h"
 #include "viewport/Renderer.h"
 #include "sketch/SnapEngine.h"
+#include "document/Document.h"
 #include <QOpenGLWidget>
 #include <QOpenGLFunctions_3_3_Core>
 #include <QPoint>
@@ -18,7 +19,6 @@ QT_END_NAMESPACE
 
 namespace elcad {
 
-class Document;
 class Sketch;
 class SketchTool;
 
@@ -48,6 +48,7 @@ signals:
     void cursorWorldPos(float x, float y, float z);
     void sketchCursorPos(float u, float v);  // sketch-plane 2D coords
     void requestExitSketch();                // emitted when Esc pressed with no active tool op
+    void requestReactivateSketch(Sketch* sketch);  // emitted on double-click over a completed sketch
     void cameraOrientationChanged(float yaw, float pitch, bool perspective);
 
 public slots:
@@ -59,11 +60,12 @@ protected:
     void resizeGL(int w, int h) override;
     void paintGL()              override;
 
-    void mousePressEvent  (QMouseEvent* e) override;
-    void mouseReleaseEvent(QMouseEvent* e) override;
-    void mouseMoveEvent   (QMouseEvent* e) override;
-    void wheelEvent       (QWheelEvent* e) override;
-    void keyPressEvent    (QKeyEvent*   e) override;
+    void mousePressEvent      (QMouseEvent* e) override;
+    void mouseReleaseEvent    (QMouseEvent* e) override;
+    void mouseMoveEvent       (QMouseEvent* e) override;
+    void mouseDoubleClickEvent(QMouseEvent* e) override;
+    void wheelEvent           (QWheelEvent* e) override;
+    void keyPressEvent        (QKeyEvent*   e) override;
 
 private:
     void handlePickClick(QPoint pos, bool addToSelection);
@@ -89,6 +91,10 @@ private:
     // Last snapped sketch position (for rendering crosshair)
     QVector2D    m_snapPos;
     bool         m_hasSnapPos{false};
+
+    // Hovered completed-sketch entity (updated each mouse-move in non-sketch mode)
+    Document::SelectedItem m_hoveredSketchItem;
+    bool                   m_hasHoveredSketchItem{false};
 
     // Gizmo drag state
     Body*        m_gizmoDragBody{nullptr};   // non-owned; valid only during drag

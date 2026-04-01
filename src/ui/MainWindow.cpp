@@ -111,6 +111,17 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport, &ViewportWidget::requestExitSketch,
             this, &MainWindow::exitSketch);
 
+    connect(m_viewport, &ViewportWidget::requestReactivateSketch,
+            this, [this](Sketch* sketch) {
+        if (!sketch) return;
+        if (m_viewport->inSketchMode()) exitSketch();
+        LOG_INFO("MainWindow: reactivating sketch id={} via double-click", sketch->id());
+        m_document->reactivateSketch(sketch);  // emits activeSketchChanged(sketch)
+        if (m_ribbon) m_ribbon->setSketchMode(true);
+        m_statusSnap->setText(QString("Plane: %1").arg(sketch->plane().name()));
+        activateSketchTool(1);
+    });
+
     LOG_INFO("MainWindow: ready");
 }
 

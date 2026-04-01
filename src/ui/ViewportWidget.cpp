@@ -6,6 +6,7 @@
 #include "document/UndoStack.h"
 #include "sketch/Sketch.h"
 #include "sketch/SketchPlane.h"
+#include "sketch/SketchPicker.h"
 #include "tools/SketchTool.h"
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -295,6 +296,29 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
             update();
     }
 
+    // ── Completed sketch hover picking ────────────────────────────────────────
+    if (!m_sketch && m_dragMode == DragMode::None && m_document) {
+        QVector3D ro, rd;
+        m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
+        if (m_camera.isPerspective()) ro = m_camera.position();
+
+        SketchHit hit = SketchPicker::pick(ro, rd, m_document);
+        bool newValid = hit.valid();
+        Document::SelectedItem newItem = newValid ? hit.item : Document::SelectedItem{};
+
+        bool changed = (newValid != m_hasHoveredSketchItem) ||
+                       (newValid && !(newItem == m_hoveredSketchItem));
+        if (changed) {
+            m_hasHoveredSketchItem = newValid;
+            m_hoveredSketchItem    = newItem;
+            if (newValid)
+                m_renderer.setSketchHover(newItem);
+            else
+                m_renderer.clearSketchHover();
+            update();
+        }
+    }
+
     // ── World cursor coordinates for status bar ───────────────────────────────
     if (!m_sketch) {
         QVector3D ro, rd;
@@ -313,6 +337,23 @@ void ViewportWidget::wheelEvent(QWheelEvent* e)
 {
     m_camera.zoom(e->angleDelta().y());
     update();
+}
+
+void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    if (m_sketch || !m_document) return;  // already in sketch-edit mode
+
+    QVector3D ro, rd;
+    m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
+    if (m_camera.isPerspective()) ro = m_camera.position();
+
+    SketchHit hit = SketchPicker::pick(ro, rd, m_document);
+    if (hit.valid()) {
+        LOG_INFO("Viewport: double-click on sketch id={} — requesting re-edit",
+                 hit.sketch->id());
+        emit requestReactivateSketch(hit.sketch);
+    }
 }
 
 // ── Gizmo drag commit ─────────────────────────────────────────────────────────
@@ -368,6 +409,13 @@ void ViewportWidget::handlePickClick(QPoint pos, bool addToSelection)
     bool hit = m_renderer.pickHit(ro, rd, m_document, hitItem);
 
     if (!hit) {
+        // No body/face hit — check for hovered sketch entity.
+        if (m_hasHoveredSketchItem) {
+            if (!addToSelection) m_document->clearSelection();
+            m_document->addSelection(m_hoveredSketchItem);
+            update();
+            return;
+        }
         m_document->clearSelection();
         update();
         return;

@@ -7,6 +7,8 @@ namespace elcad {
 
 quint64 SketchConstraint::s_nextId = 1;
 
+static quint64 s_nextSketchId = 1;
+
 // Helper: readable name for constraint type
 static const char* constraintTypeName(SketchConstraint::Type t)
 {
@@ -29,6 +31,7 @@ static const char* constraintTypeName(SketchConstraint::Type t)
 
 Sketch::Sketch(SketchPlane plane, QObject* parent)
     : QObject(parent)
+    , m_id(s_nextSketchId++)
     , m_plane(std::move(plane))
 {}
 

@@ -14,6 +14,8 @@ class Sketch : public QObject {
 public:
     explicit Sketch(SketchPlane plane, QObject* parent = nullptr);
 
+    quint64 id() const { return m_id; }
+
     const SketchPlane& plane() const { return m_plane; }
 
     // Entity creation helpers
@@ -44,7 +46,8 @@ signals:
     void sketchChanged();
 
 private:
-    SketchPlane m_plane;
+    quint64      m_id;
+    SketchPlane  m_plane;
     std::vector<std::unique_ptr<SketchEntity>>    m_entities;
     std::vector<std::unique_ptr<SketchConstraint>> m_constraints;
 };

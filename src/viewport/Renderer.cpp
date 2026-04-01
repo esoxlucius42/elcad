@@ -113,6 +113,51 @@ void Renderer::render(Camera& camera, Document* doc,
         const std::vector<SketchEntity>& preview = sketchPreview ? *sketchPreview : empty;
         m_sketchRenderer.render(*m_activeSketch, view, proj, preview, snapPos);
     }
+
+    // ── Completed sketch overlays (shown when not actively editing) ───────────
+    if (!m_activeSketch && doc) {
+        const auto& selection = doc->selectionItems();
+
+        for (const auto& sketchPtr : doc->sketches()) {
+            quint64 hoveredEntityId        = 0;
+            int     hoveredAreaIndex       = -1;
+            quint64 hoveredCircleEntityId  = 0;
+
+            if (m_hasSketchHover && m_sketchHover.sketchId == sketchPtr->id()) {
+                using T = Document::SelectedItem::Type;
+                if (m_sketchHover.type == T::SketchLine ||
+                    m_sketchHover.type == T::SketchPoint)
+                    hoveredEntityId = m_sketchHover.entityId;
+                else if (m_sketchHover.type == T::SketchArea) {
+                    if (m_sketchHover.index == -1)
+                        hoveredCircleEntityId = m_sketchHover.entityId;
+                    else
+                        hoveredAreaIndex = m_sketchHover.index;
+                }
+            }
+
+            std::vector<quint64> selectedEntityIds;
+            std::vector<int>     selectedAreaIndices;
+            std::vector<quint64> selectedCircleEntityIds;
+            using T = Document::SelectedItem::Type;
+            for (const auto& sel : selection) {
+                if (sel.sketchId != sketchPtr->id()) continue;
+                if (sel.type == T::SketchLine || sel.type == T::SketchPoint)
+                    selectedEntityIds.push_back(sel.entityId);
+                else if (sel.type == T::SketchArea) {
+                    if (sel.index == -1)
+                        selectedCircleEntityIds.push_back(sel.entityId);
+                    else
+                        selectedAreaIndices.push_back(sel.index);
+                }
+            }
+
+            m_sketchRenderer.renderInactive(*sketchPtr, view, proj,
+                                             hoveredEntityId, selectedEntityIds,
+                                             hoveredAreaIndex, hoveredCircleEntityId,
+                                             selectedAreaIndices, selectedCircleEntityIds);
+        }
+    }
 }
 
 void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& proj,

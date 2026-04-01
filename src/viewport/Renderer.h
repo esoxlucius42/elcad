@@ -61,6 +61,13 @@ public:
     // Active sketch overlay (does not take ownership)
     void setActiveSketch(Sketch* sketch) { m_activeSketch = sketch; }
 
+    // Hover state for completed sketch entities (set each frame from ViewportWidget).
+    void setSketchHover(const Document::SelectedItem& item) {
+        m_sketchHover      = item;
+        m_hasSketchHover   = true;
+    }
+    void clearSketchHover() { m_hasSketchHover = false; }
+
     // Gizmo access
     Gizmo& gizmo() { return m_gizmo; }
 
@@ -80,6 +87,10 @@ private:
     bool           m_initialized{false};
     bool           m_gridVisible{true};
     int            m_width{1}, m_height{1};
+
+    // Hover state for completed sketches (updated by ViewportWidget each mouse-move)
+    Document::SelectedItem m_sketchHover;
+    bool                   m_hasSketchHover{false};
 
     // Body ID → mesh buffer cache
     std::unordered_map<quint64, std::unique_ptr<MeshBuffer>> m_meshCache;

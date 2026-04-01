@@ -104,9 +104,13 @@ void Document::addSelection(const SelectedItem& it)
     if (isSelected(it)) return;
     m_selection.push_back(it);
 
-    // Mark the owning body as selected for any item type (face, edge, vertex, or body-level).
-    // This ensures the gizmo, edge highlighting, and singleSelectedBody() all work correctly.
-    if (Body* b = bodyById(it.bodyId)) b->setSelected(true);
+    // Only update body selection flags for body-related item types.
+    bool isSketchType = (it.type == SelectedItem::Type::SketchPoint ||
+                         it.type == SelectedItem::Type::SketchLine  ||
+                         it.type == SelectedItem::Type::SketchArea);
+    if (!isSketchType) {
+        if (Body* b = bodyById(it.bodyId)) b->setSelected(true);
+    }
 
     emit selectionChanged();
 }
@@ -118,15 +122,20 @@ void Document::removeSelection(const SelectedItem& it)
     if (itPos == m_selection.end()) return;
     m_selection.erase(itPos);
 
-    if (it.type == SelectedItem::Type::Body) {
-        if (Body* b = bodyById(it.bodyId)) b->setSelected(false);
-    } else {
-        // For sub-item (face/edge/vertex) removal: deselect the body only when it has
-        // no remaining selection items at all.
-        if (Body* b = bodyById(it.bodyId)) {
-            bool stillSelected = std::any_of(m_selection.begin(), m_selection.end(),
-                [&](const SelectedItem& s){ return s.bodyId == it.bodyId; });
-            if (!stillSelected) b->setSelected(false);
+    bool isSketchType = (it.type == SelectedItem::Type::SketchPoint ||
+                         it.type == SelectedItem::Type::SketchLine  ||
+                         it.type == SelectedItem::Type::SketchArea);
+    if (!isSketchType) {
+        if (it.type == SelectedItem::Type::Body) {
+            if (Body* b = bodyById(it.bodyId)) b->setSelected(false);
+        } else {
+            // For sub-item (face/edge/vertex) removal: deselect the body only when it has
+            // no remaining selection items at all.
+            if (Body* b = bodyById(it.bodyId)) {
+                bool stillSelected = std::any_of(m_selection.begin(), m_selection.end(),
+                    [&](const SelectedItem& s){ return s.bodyId == it.bodyId; });
+                if (!stillSelected) b->setSelected(false);
+            }
         }
     }
 
@@ -177,6 +186,34 @@ void Document::endSketch()
              m_activeSketch->entities().size());
     m_sketches.push_back(std::move(m_activeSketch));
     emit activeSketchChanged(nullptr);
+}
+
+void Document::reactivateSketch(Sketch* sketch)
+{
+    if (!sketch) return;
+    auto it = std::find_if(m_sketches.begin(), m_sketches.end(),
+        [sketch](const auto& s) { return s.get() == sketch; });
+    if (it == m_sketches.end()) {
+        LOG_WARN("Document::reactivateSketch: sketch not found in completed list");
+        return;
+    }
+    // Push any currently active sketch back to the completed list.
+    if (m_activeSketch)
+        m_sketches.push_back(std::move(m_activeSketch));
+
+    m_activeSketch = std::move(*it);
+    m_sketches.erase(it);
+
+    LOG_INFO("Document: sketch reactivated — id={} {} entities",
+             m_activeSketch->id(), m_activeSketch->entities().size());
+    emit activeSketchChanged(m_activeSketch.get());
+}
+
+Sketch* Document::sketchById(quint64 id) const
+{
+    for (auto& s : m_sketches)
+        if (s->id() == id) return s.get();
+    return nullptr;
 }
 
 } // namespace elcad
