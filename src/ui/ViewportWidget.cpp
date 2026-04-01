@@ -61,7 +61,7 @@ void ViewportWidget::paintGL()
     if (m_activeTool)
         preview = m_activeTool->previewEntities();
 
-    const QVector2D* snapPtr = m_hasSnapPos ? &m_snapPos : nullptr;
+    const SnapResult* snapPtr = (m_snapResult.type != SnapResult::None) ? &m_snapResult : nullptr;
     m_renderer.render(m_camera, m_document,
                       preview.empty() ? nullptr : &preview,
                       snapPtr);
@@ -82,7 +82,7 @@ void ViewportWidget::enterSketchMode(Sketch* sketch)
 {
     m_sketch      = sketch;
     m_activeTool  = nullptr;
-    m_hasSnapPos  = false;
+    m_snapResult  = {};
     m_renderer.setActiveSketch(sketch);
     update();
 }
@@ -91,7 +91,7 @@ void ViewportWidget::exitSketchMode()
 {
     m_sketch      = nullptr;
     m_activeTool  = nullptr;
-    m_hasSnapPos  = false;
+    m_snapResult  = {};
     m_renderer.setActiveSketch(nullptr);
     update();
 }
@@ -225,8 +225,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     if (m_sketch) {
         QVector2D rawPos = screenToSketch(e->pos());
         SnapResult snap  = m_snapEngine.snap(rawPos, m_sketch);
-        m_snapPos    = snap.pos;
-        m_hasSnapPos = true;
+        m_snapResult = snap;
 
         emit sketchCursorPos(snap.pos.x(), snap.pos.y());
 

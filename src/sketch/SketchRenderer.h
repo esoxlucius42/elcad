@@ -1,6 +1,7 @@
 #pragma once
 #include "viewport/ShaderProgram.h"
 #include "sketch/SketchEntity.h"
+#include "sketch/SnapEngine.h"
 #include <QOpenGLFunctions_3_3_Core>
 #include <QVector3D>
 #include <QMatrix4x4>
@@ -21,12 +22,12 @@ public:
     void initialize();
 
     // Render sketch entities. previewEntities are drawn in cyan (in-progress tool).
-    // snapPos (optional): if not null, draws a crosshair at the snap point.
+    // snapResult (optional): if not null, draws a crosshair + type indicator at the snap point.
     void render(const Sketch&                    sketch,
                 const QMatrix4x4&               view,
                 const QMatrix4x4&               proj,
                 const std::vector<SketchEntity>& previewEntities = {},
-                const QVector2D*                 snapPos         = nullptr);
+                const SnapResult*                snapResult      = nullptr);
 
     // Render a completed (non-editable) sketch in a muted style.
     // hoveredEntityId: entity highlighted under the cursor (0 = none).

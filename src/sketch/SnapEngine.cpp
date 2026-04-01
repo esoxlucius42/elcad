@@ -38,13 +38,22 @@ SnapResult SnapEngine::snap(QVector2D rawPos, const Sketch* sketch,
             if (ep->type == SketchEntity::Line) {
                 tryPoint(ep->p0.toVec());
                 tryPoint(ep->p1.toVec());
-                tryPoint((ep->p0.toVec() + ep->p1.toVec()) * 0.5f);  // midpoint
+                // Midpoint: try separately so we can tag it correctly
+                {
+                    QVector2D mid = (ep->p0.toVec() + ep->p1.toVec()) * 0.5f;
+                    float d = (mid - rawPos).length();
+                    if (d < bestDist) {
+                        bestDist    = d;
+                        result.pos  = mid;
+                        result.type = SnapResult::Midpoint;
+                    }
+                }
             } else if (ep->type == SketchEntity::Circle ||
                        ep->type == SketchEntity::Arc) {
                 tryPoint(ep->p0.toVec()); // center
             }
         }
-        if (result.type == SnapResult::Vertex) {
+        if (result.type == SnapResult::Vertex || result.type == SnapResult::Midpoint) {
             LOG_TRACE("Snap: vertex hit at ({:.3f},{:.3f})", result.pos.x(), result.pos.y());
             return result;
         }

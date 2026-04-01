@@ -89,9 +89,8 @@ private:
     bool         m_lmbDown{false};
     QRubberBand* m_rubberBand{nullptr};
 
-    // Last snapped sketch position (for rendering crosshair)
-    QVector2D    m_snapPos;
-    bool         m_hasSnapPos{false};
+    // Last snap result (for rendering snap indicator); type == None means no active snap
+    SnapResult   m_snapResult;
 
     // Hovered completed-sketch entity (updated each mouse-move in non-sketch mode)
     Document::SelectedItem m_hoveredSketchItem;

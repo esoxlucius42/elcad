@@ -42,7 +42,7 @@ void SketchRenderer::render(const Sketch& sketch,
                              const QMatrix4x4& view,
                              const QMatrix4x4& proj,
                              const std::vector<SketchEntity>& previewEntities,
-                             const QVector2D* snapPos)
+                             const SnapResult* snapResult)
 {
     if (!m_initialized) return;
 
@@ -84,14 +84,55 @@ void SketchRenderer::render(const Sketch& sketch,
     for (const auto& e : previewEntities)
         addEntityLines(e, plane, normal, selected, construction, preview, true);
 
-    // ── Snap crosshair ────────────────────────────────────────────────────────
-    if (snapPos) {
+    // ── Snap crosshair + type indicator ──────────────────────────────────────
+    LineList snapMarker;  // drawn in yellow/gold, on top of everything
+    if (snapResult && snapResult->type != SnapResult::None) {
         float s = kCrosshairSize;
-        QVector2D p = *snapPos;
+        QVector2D p = snapResult->pos;
+
+        // Crosshair (always drawn for any active snap)
         preview.push_back(plane.to3D(p + QVector2D(-s, 0)));
         preview.push_back(plane.to3D(p + QVector2D( s, 0)));
         preview.push_back(plane.to3D(p + QVector2D(0, -s)));
         preview.push_back(plane.to3D(p + QVector2D(0,  s)));
+
+        constexpr float kMarker = 3.f;  // mm — half-size of snap shape
+        switch (snapResult->type) {
+        case SnapResult::Vertex: {
+            // Square: 4 corners connected
+            snapMarker.push_back(plane.to3D(p + QVector2D(-kMarker, -kMarker)));
+            snapMarker.push_back(plane.to3D(p + QVector2D( kMarker, -kMarker)));
+            snapMarker.push_back(plane.to3D(p + QVector2D( kMarker, -kMarker)));
+            snapMarker.push_back(plane.to3D(p + QVector2D( kMarker,  kMarker)));
+            snapMarker.push_back(plane.to3D(p + QVector2D( kMarker,  kMarker)));
+            snapMarker.push_back(plane.to3D(p + QVector2D(-kMarker,  kMarker)));
+            snapMarker.push_back(plane.to3D(p + QVector2D(-kMarker,  kMarker)));
+            snapMarker.push_back(plane.to3D(p + QVector2D(-kMarker, -kMarker)));
+            break;
+        }
+        case SnapResult::Midpoint: {
+            // Triangle pointing up
+            QVector2D top   = p + QVector2D(0.f,          kMarker * 1.2f);
+            QVector2D left  = p + QVector2D(-kMarker,    -kMarker * 0.7f);
+            QVector2D right = p + QVector2D( kMarker,    -kMarker * 0.7f);
+            snapMarker.push_back(plane.to3D(top));   snapMarker.push_back(plane.to3D(left));
+            snapMarker.push_back(plane.to3D(left));  snapMarker.push_back(plane.to3D(right));
+            snapMarker.push_back(plane.to3D(right)); snapMarker.push_back(plane.to3D(top));
+            break;
+        }
+        case SnapResult::Origin: {
+            // Circle ring (8-segment approximation)
+            constexpr int kSegs = 8;
+            for (int i = 0; i < kSegs; ++i) {
+                float a0 = float(i)     / kSegs * 2.f * float(M_PI);
+                float a1 = float(i + 1) / kSegs * 2.f * float(M_PI);
+                snapMarker.push_back(plane.to3D(p + QVector2D(kMarker * qCos(a0), kMarker * qSin(a0))));
+                snapMarker.push_back(plane.to3D(p + QVector2D(kMarker * qCos(a1), kMarker * qSin(a1))));
+            }
+            break;
+        }
+        default: break;
+        }
     }
 
     // ── Draw all groups ───────────────────────────────────────────────────────
@@ -107,6 +148,9 @@ void SketchRenderer::render(const Sketch& sketch,
     drawLines(normal,       {0.90f, 0.90f, 0.90f}, view, proj);  // near-white
     drawLines(selected,     {1.00f, 0.70f, 0.00f}, view, proj);  // gold
     drawLines(preview,      {0.30f, 0.80f, 1.00f}, view, proj);  // cyan
+
+    glLineWidth(2.0f);
+    drawLines(snapMarker,   {1.00f, 0.85f, 0.10f}, view, proj);  // bright yellow/gold
 
     glEnable(GL_DEPTH_TEST);
 }

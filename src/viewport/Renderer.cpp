@@ -55,7 +55,7 @@ void Renderer::resize(int w, int h)
 
 void Renderer::render(Camera& camera, Document* doc,
                       const std::vector<SketchEntity>* sketchPreview,
-                      const QVector2D* snapPos,
+                      const SnapResult* snapResult,
                       float devicePixelRatio)
 {
     glClearColor(0.2f, 0.2f, 0.2f, 1.0f); // #333333
@@ -111,7 +111,7 @@ void Renderer::render(Camera& camera, Document* doc,
     if (m_activeSketch) {
         static const std::vector<SketchEntity> empty;
         const std::vector<SketchEntity>& preview = sketchPreview ? *sketchPreview : empty;
-        m_sketchRenderer.render(*m_activeSketch, view, proj, preview, snapPos);
+        m_sketchRenderer.render(*m_activeSketch, view, proj, preview, snapResult);
     }
 
     // ── Completed sketch overlays (shown when not actively editing) ───────────

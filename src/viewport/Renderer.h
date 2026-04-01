@@ -5,6 +5,7 @@
 #include "viewport/OriginMarker.h"
 #include "viewport/MeshBuffer.h"
 #include "viewport/ShaderProgram.h"
+#include "sketch/SnapEngine.h"
 #include "sketch/SketchRenderer.h"
 #include "document/Document.h"
 #include <QOpenGLFunctions_3_3_Core>
@@ -31,7 +32,7 @@ public:
     void resize(int w, int h);
     void render(Camera& camera, Document* doc = nullptr,
                 const std::vector<SketchEntity>* sketchPreview = nullptr,
-                const QVector2D*                 snapPos       = nullptr,
+                const SnapResult*                snapResult    = nullptr,
                 float                             devicePixelRatio = 1.0f);
 
     // Invalidate cached mesh for a body (call when body shape changes)
