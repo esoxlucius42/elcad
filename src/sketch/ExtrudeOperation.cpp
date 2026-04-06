@@ -17,6 +17,7 @@
 #include <gp_Vec.hxx>
 #include <gp_Trsf.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
 
 namespace elcad {
 
@@ -198,9 +199,13 @@ ExtrudeResult ExtrudeOperation::booleanAdd(const TopoDS_Shape& base,
                       static_cast<int>(tool.ShapeType()));
             return result;
         }
-        result.shape   = fuse.Shape();
+        ShapeUpgrade_UnifySameDomain unify(fuse.Shape(), /*unifyFaces=*/true,
+                                                          /*unifyEdges=*/true,
+                                                          /*concatBSplines=*/false);
+        unify.Build();
+        result.shape   = unify.Shape();
         result.success = true;
-        LOG_INFO("Boolean union succeeded");
+        LOG_INFO("Boolean union succeeded — coplanar faces merged");
     } catch (const Standard_Failure& e) {
         result.errorMsg = QString("OCCT exception: %1").arg(e.GetMessageString());
         LOG_ERROR("Boolean union threw OCCT exception: '{}'", e.GetMessageString());
@@ -226,9 +231,13 @@ ExtrudeResult ExtrudeOperation::booleanCut(const TopoDS_Shape& base,
                       static_cast<int>(tool.ShapeType()));
             return result;
         }
-        result.shape   = cut.Shape();
+        ShapeUpgrade_UnifySameDomain unify(cut.Shape(), /*unifyFaces=*/true,
+                                                         /*unifyEdges=*/true,
+                                                         /*concatBSplines=*/false);
+        unify.Build();
+        result.shape   = unify.Shape();
         result.success = true;
-        LOG_INFO("Boolean cut succeeded");
+        LOG_INFO("Boolean cut succeeded — coplanar faces merged");
     } catch (const Standard_Failure& e) {
         result.errorMsg = QString("OCCT exception: %1").arg(e.GetMessageString());
         LOG_ERROR("Boolean cut threw OCCT exception: '{}'", e.GetMessageString());
