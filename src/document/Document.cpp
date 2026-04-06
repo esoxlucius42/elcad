@@ -225,6 +225,15 @@ void Document::setSketchVisible(quint64 id, bool visible)
 {
     if (Sketch* s = sketchById(id)) {
         s->setVisible(visible);
+        if (!visible) {
+            s->clearSelection();
+            auto it = std::remove_if(m_selection.begin(), m_selection.end(),
+                [id](const SelectedItem& si) { return si.sketchId == id; });
+            if (it != m_selection.end()) {
+                m_selection.erase(it, m_selection.end());
+                emit selectionChanged();
+            }
+        }
         emit sketchVisibilityChanged(s);
     }
 }

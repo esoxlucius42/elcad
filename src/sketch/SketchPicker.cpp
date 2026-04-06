@@ -62,6 +62,7 @@ SketchHit SketchPicker::pick(const QVector3D& rayOrigin,
     int   bestPriority = -1;  // 2=point endpoint, 1=line/arc edge, 0=filled area
 
     for (auto& sketchPtr : doc->sketches()) {
+        if (!sketchPtr->visible()) continue;
         const Sketch&      sketch = *sketchPtr;
         const SketchPlane& plane  = sketch.plane();
 

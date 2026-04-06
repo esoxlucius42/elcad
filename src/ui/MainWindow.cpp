@@ -483,13 +483,20 @@ void MainWindow::onExtrude()
             faceBody = m_document->bodyById(commonBody);
             faceTriIndex = representativeTri;
         } else {
-            // Try last completed sketch as before
-            if (m_document->sketches().empty()) {
-                LOG_WARN("Extrude: no sketch available and no face selected — user notified");
-                QMessageBox::warning(this, "Extrude", "No sketch available and no face selected.\nCreate a sketch or select a face first.");
+            // Check if any sketch geometry (area, line, point) is selected — resolve its owning sketch
+            using T = Document::SelectedItem::Type;
+            for (const auto& s : sel) {
+                if (s.type == T::SketchArea || s.type == T::SketchLine || s.type == T::SketchPoint) {
+                    sketch = m_document->sketchById(s.sketchId);
+                    if (sketch) break;
+                }
+            }
+            if (!sketch) {
+                LOG_WARN("Extrude: no sketch active, no face selected, no sketch geometry selected — user notified");
+                QMessageBox::warning(this, "Extrude",
+                    "No geometry selected.\nActivate a sketch, select a sketch area, or select a face to extrude.");
                 return;
             }
-            sketch = m_document->sketches().back().get();
         }
     }
 
@@ -635,6 +642,8 @@ void MainWindow::onExtrude()
     // Hide the sketch that was used for this extrude
     if (!faceExtrude && sketch)
         m_document->setSketchVisible(sketch->id(), false);
+
+    m_document->clearSelection();
 #else
     QMessageBox::information(this, "Extrude", "OCCT not available.");
 #endif
