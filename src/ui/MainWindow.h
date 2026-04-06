@@ -2,6 +2,8 @@
 #include <QMainWindow>
 #include "document/Document.h"
 #include "tools/SketchTool.h"
+#include "ui/ExtrudeDialog.h"
+#include <functional>
 #include <memory>
 
 QT_BEGIN_NAMESPACE
@@ -15,6 +17,7 @@ class BodyListPanel;
 class PropertiesPanel;
 class NavCubeWidget;
 class RibbonWidget;
+class ToolOptionsPanel;
 class Document;
 class SketchTool;
 
@@ -46,14 +49,20 @@ private:
 
     std::unique_ptr<Document> m_document;
 
-    ViewportWidget*  m_viewport{nullptr};
-    BodyListPanel*   m_bodyListPanel{nullptr};
-    PropertiesPanel* m_propertiesPanel{nullptr};
-    NavCubeWidget*   m_navCube{nullptr};
-    RibbonWidget*    m_ribbon{nullptr};
-    QLabel*          m_statusCoords{nullptr};
-    QLabel*          m_statusMode{nullptr};
-    QLabel*          m_statusSnap{nullptr};
+    ViewportWidget*   m_viewport{nullptr};
+    BodyListPanel*    m_bodyListPanel{nullptr};
+    PropertiesPanel*  m_propertiesPanel{nullptr};
+    NavCubeWidget*    m_navCube{nullptr};
+    RibbonWidget*     m_ribbon{nullptr};
+    ToolOptionsPanel* m_toolOptionsPanel{nullptr};
+    QLabel*           m_statusCoords{nullptr};
+    QLabel*           m_statusMode{nullptr};
+    QLabel*           m_statusSnap{nullptr};
+
+    // Pending operation closures — set when a tool is activated in the panel
+    std::function<void(ExtrudeParams)>     m_pendingExtrudeFn;
+    std::function<void(int)>               m_pendingMirrorFn;
+    std::function<void(quint64, quint64)>  m_pendingBooleanFn;
 
     // Undo/Redo actions (kept to update text and enabled state)
     QAction* m_actUndo{nullptr};
