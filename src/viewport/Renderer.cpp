@@ -85,26 +85,69 @@ void Renderer::render(Camera& camera, Document* doc,
 
     glDisable(GL_POLYGON_OFFSET_FILL);
 
-    // ── Gizmo overlay (translate/rotate/scale handles) ────────────────────────
-    if (!m_activeSketch) {
-        Body* selected = nullptr;
-        for (auto& b : doc->bodies()) {
-            if (b->selected() && b->hasBbox()) { selected = b.get(); break; }
+    // ── Preview ghost pass ────────────────────────────────────────────────────
+#ifdef ELCAD_HAVE_OCCT
+    if (m_hasPreview) {
+        // Build the MeshBuffer here (GL context is current) if shape changed
+        if (m_previewDirty) {
+            m_previewMesh = std::make_unique<MeshBuffer>();
+            m_previewMesh->build(m_previewShape, 0.02f);
+            m_previewDirty = false;
+            LOG_DEBUG("Preview mesh built: {} triangles", m_previewMesh->triangleCount() / 3);
         }
-        m_gizmo.setVisible(selected != nullptr);
-        if (selected && !m_gizmo.isDragging()) {
-            m_gizmo.setPosition((selected->bboxMin() + selected->bboxMax()) * 0.5f);
-            LOG_INFO("Renderer: selected id={} bbox_center=({:.3f},{:.3f},{:.3f}) viewH={} fov={}",
-                     selected->id(),
-                     ((selected->bboxMin()+selected->bboxMax())*0.5f).x(),
-                     ((selected->bboxMin()+selected->bboxMax())*0.5f).y(),
-                     ((selected->bboxMin()+selected->bboxMax())*0.5f).z(),
-                     m_height, camera.fov());
+
+        if (m_previewMesh && !m_previewMesh->isEmpty() && m_phong.isValid()) {
+            glDepthMask(GL_FALSE);
+            glDisable(GL_CULL_FACE);
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            QMatrix4x4 model;
+            QMatrix3x3 normalMat = model.normalMatrix();
+            m_phong.bind();
+            m_phong.setMat4("uModel",        model);
+            m_phong.setMat4("uView",         view);
+            m_phong.setMat4("uProjection",   proj);
+            m_phong.setMat3("uNormalMatrix", normalMat);
+            m_phong.setVec3("uLightDir",     m_lightDir.normalized());
+            m_phong.setVec3("uLightColor",   m_lightColor);
+            m_phong.setVec3("uObjectColor",  QVector3D(0.25f, 0.85f, 0.95f));  // cyan ghost
+            m_phong.setVec3("uViewPos",      camPos);
+            m_phong.setVec3("uSkyColor",     m_skyColor);
+            m_phong.setVec3("uGroundColor",  m_groundColor);
+            m_phong.setVec3("uFillDir",      m_fillDir.normalized());
+            m_phong.setVec3("uFillColor",    m_fillColor);
+            m_phong.setFloat("uAlpha",       0.45f);
+            m_previewMesh->drawTriangles();
+            m_phong.release();
+
+            glDepthMask(GL_TRUE);
+            glEnable(GL_CULL_FACE);
+        }
+    }
+#endif
+
+    // ── Gizmo overlay (translate/rotate/scale handles) ────────────────────────
+    // Extrude1D gizmo is managed by ViewportWidget — skip auto-management for it.
+    if (!m_activeSketch) {
+        if (m_gizmo.mode() != GizmoMode::Extrude1D) {
+            Body* selected = nullptr;
+            for (auto& b : doc->bodies()) {
+                if (b->selected() && b->hasBbox()) { selected = b.get(); break; }
+            }
+            m_gizmo.setVisible(selected != nullptr);
+            if (selected && !m_gizmo.isDragging()) {
+                m_gizmo.setPosition((selected->bboxMin() + selected->bboxMax()) * 0.5f);
+            }
         }
         if (m_gizmo.visible())
             m_gizmo.draw(view, proj, camPos, m_width, m_height, camera.fov());
     } else {
-        m_gizmo.setVisible(false);
+        // In sketch mode, hide the body gizmo but leave Extrude1D alone
+        if (m_gizmo.mode() != GizmoMode::Extrude1D)
+            m_gizmo.setVisible(false);
+        if (m_gizmo.mode() == GizmoMode::Extrude1D && m_gizmo.visible())
+            m_gizmo.draw(view, proj, camPos, m_width, m_height, camera.fov());
     }
 
     // ── Sketch overlay ────────────────────────────────────────────────────────
@@ -200,6 +243,7 @@ void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& pr
         m_phong.setVec3("uGroundColor", m_groundColor);
         m_phong.setVec3("uFillDir",     m_fillDir.normalized());
         m_phong.setVec3("uFillColor",   m_fillColor);
+        m_phong.setFloat("uAlpha",      1.0f);
 
         mesh->drawTriangles();
         m_phong.release();
@@ -441,6 +485,29 @@ void Renderer::clearMeshCache()
     m_meshCache.clear();
 }
 
+#ifdef ELCAD_HAVE_OCCT
+void Renderer::setPreviewShape(const TopoDS_Shape& shape)
+{
+    // Only store the shape here — the MeshBuffer (GPU upload) is built lazily
+    // inside render() where an OpenGL context is guaranteed to be current.
+    m_previewShape = shape;
+    m_previewDirty = true;
+    m_hasPreview   = true;
+    m_previewMesh.reset();
+    LOG_DEBUG("Preview shape queued for next render");
+}
+#endif
+
+void Renderer::clearPreviewShape()
+{
+    m_previewMesh.reset();
+    m_hasPreview   = false;
+    m_previewDirty = false;
+#ifdef ELCAD_HAVE_OCCT
+    m_previewShape = TopoDS_Shape{};
+#endif
+}
+
 Body* Renderer::pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc)
 {
 #ifndef ELCAD_HAVE_OCCT
@@ -586,6 +653,28 @@ int Renderer::faceOrdinalForTriangle(Body* body, int triIndex)
 #endif
 }
 
+QVector3D Renderer::triangleNormal(Body* body, int triIndex)
+{
+    if (!body) return {0, 1, 0};
+    MeshBuffer* mesh = getMeshBuffer(body);
+    if (!mesh || mesh->isEmpty()) return {0, 1, 0};
+    if (triIndex < 0 || triIndex >= mesh->triangleCount()) return {0, 1, 0};
+    return mesh->triangleNormal(triIndex);
+}
+
+QVector3D Renderer::triangleCentroid(Body* body, int triIndex)
+{
+    if (!body) return {0, 0, 0};
+    MeshBuffer* mesh = getMeshBuffer(body);
+    if (!mesh || mesh->isEmpty()) return {0, 0, 0};
+    const auto& verts   = mesh->pickVertices();
+    const auto& indices = mesh->pickIndices();
+    int base = triIndex * 3;
+    if (base + 2 >= static_cast<int>(indices.size())) return {0, 0, 0};
+    unsigned i0 = indices[base], i1 = indices[base + 1], i2 = indices[base + 2];
+    if (i0 >= verts.size() || i1 >= verts.size() || i2 >= verts.size()) return {0, 0, 0};
+    return (verts[i0] + verts[i1] + verts[i2]) / 3.0f;
+}
 
 std::vector<int> Renderer::expandFaceSelection(Body* body, int startTri, float angleDeg, float distanceTol)
 {

@@ -57,6 +57,7 @@ Gizmo::~Gizmo()
     for (int i = 0; i < 6; ++i) destroyHandle(m_translateH[i]);
     for (int i = 0; i < 3; ++i) destroyHandle(m_rotateH[i]);
     for (int i = 0; i < 4; ++i) destroyHandle(m_scaleH[i]);
+    destroyHandle(m_extrude1DH);
 }
 
 // ── Initialize ────────────────────────────────────────────────────────────────
@@ -71,6 +72,7 @@ void Gizmo::initialize()
     buildTranslate();
     buildRotate();
     buildScale();
+    buildExtrude1D();
 
     m_initialized = true;
     LOG_INFO("Gizmo initialised — shader valid={}", m_shader.isValid());
@@ -313,7 +315,23 @@ void Gizmo::buildScale()
     }
 }
 
-// ── GPU upload / destroy ──────────────────────────────────────────────────────
+void Gizmo::buildExtrude1D()
+{
+    // Single arrow along +Y in local space, styled distinct from transform gizmo.
+    // The draw() call applies a rotation that maps +Y to m_extrudeAxis at render time.
+    std::vector<float> v; std::vector<unsigned> idx;
+    QVector3D base(0, 0, 0);
+    QVector3D shaftEnd(0, kShaftLen, 0);
+    QVector3D tip(0, kShaftLen + kHeadLen, 0);
+    appendCylinder(v, idx, base, shaftEnd, kShaftR, kArrowSegs);
+    appendCone(v, idx, shaftEnd, tip, kHeadR, kArrowSegs);
+    uploadHandle(m_extrude1DH, v, idx);
+
+    m_extrude1DH.pickType = Handle::PickType::Capsule;
+    m_extrude1DH.capsA    = {0, 0, 0};
+    m_extrude1DH.capsB    = {0, kShaftLen + kHeadLen, 0};
+    m_extrude1DH.capsR    = kPickShaftR;
+}
 
 void Gizmo::uploadHandle(Handle& h, const std::vector<float>& verts,
                           const std::vector<unsigned>& idx)
@@ -375,13 +393,14 @@ QVector4D Gizmo::handleColor(GizmoHandle h, bool hovered)
 {
     if (hovered) return {1.0f, 0.85f, 0.05f, 1.0f};  // gold
     switch (h) {
-    case GizmoHandle::X:   return {0.90f, 0.20f, 0.20f, 1.0f};
-    case GizmoHandle::Y:   return {0.20f, 0.90f, 0.20f, 1.0f};
-    case GizmoHandle::Z:   return {0.20f, 0.40f, 0.95f, 1.0f};
-    case GizmoHandle::XY:  return {0.90f, 0.90f, 0.20f, 0.40f};
-    case GizmoHandle::XZ:  return {0.90f, 0.20f, 0.90f, 0.40f};
-    case GizmoHandle::YZ:  return {0.20f, 0.90f, 0.90f, 0.40f};
-    case GizmoHandle::XYZ: return {0.95f, 0.95f, 0.95f, 1.0f};
+    case GizmoHandle::X:      return {0.90f, 0.20f, 0.20f, 1.0f};
+    case GizmoHandle::Y:      return {0.20f, 0.90f, 0.20f, 1.0f};
+    case GizmoHandle::Z:      return {0.20f, 0.40f, 0.95f, 1.0f};
+    case GizmoHandle::XY:     return {0.90f, 0.90f, 0.20f, 0.40f};
+    case GizmoHandle::XZ:     return {0.90f, 0.20f, 0.90f, 0.40f};
+    case GizmoHandle::YZ:     return {0.20f, 0.90f, 0.90f, 0.40f};
+    case GizmoHandle::XYZ:    return {0.95f, 0.95f, 0.95f, 1.0f};
+    case GizmoHandle::Normal: return {0.20f, 0.95f, 0.95f, 1.0f};  // cyan
     default: return {0.7f, 0.7f, 0.7f, 1.0f};
     }
 }
@@ -421,17 +440,6 @@ void Gizmo::draw(const QMatrix4x4& view, const QMatrix4x4& proj,
     QMatrix4x4 S; S.setToIdentity(); S.scale(s);
     QMatrix4x4 model = S * T;
     QMatrix4x4 mvp = proj * view * model;
-
-    // Debug: log gizmo projection info to help diagnose centering issues
-    {
-        QVector4D clip = proj * view * QVector4D(m_position, 1.0f);
-        float w = clip.w();
-        QVector3D ndc = (w == 0.0f) ? QVector3D(0,0,0) : QVector3D(clip.x()/w, clip.y()/w, clip.z()/w);
-        LOG_INFO("Gizmo: pos=({:.3f},{:.3f},{:.3f}) clip=({:.3f},{:.3f},{:.3f},{:.3f}) ndc=({:.3f},{:.3f},{:.3f}) scale={:.3f} viewH={} viewW={}",
-                 m_position.x(), m_position.y(), m_position.z(),
-                 clip.x(), clip.y(), clip.z(), clip.w(),
-                 ndc.x(), ndc.y(), ndc.z(), s, viewH, viewW);
-    }
 
     // Clear depth so gizmo always draws on top of scene geometry
     glClear(GL_DEPTH_BUFFER_BIT);
@@ -488,6 +496,29 @@ void Gizmo::draw(const QMatrix4x4& view, const QMatrix4x4& proj,
         }
         drawHandle(m_scaleH[3], col(GizmoHandle::XYZ), mvp);
         break;
+
+    case GizmoMode::Extrude1D: {
+        // Build a rotation matrix R that maps local +Y to m_extrudeAxis.
+        // model_extrude = S * T * R  →  geometry is rotated then placed at m_position.
+        QVector3D from(0, 1, 0);
+        QVector3D to = m_extrudeAxis.normalized();
+        QMatrix4x4 R; R.setToIdentity();
+        float dotVal = QVector3D::dotProduct(from, to);
+        if (dotVal < -0.9999f) {
+            // 180° rotation — pick any perpendicular axis
+            QVector3D perp = (qAbs(from.x()) < 0.9f)
+                             ? QVector3D::crossProduct(from, QVector3D(1,0,0)).normalized()
+                             : QVector3D::crossProduct(from, QVector3D(0,0,1)).normalized();
+            R.rotate(180.0f, perp);
+        } else if (dotVal < 0.9999f) {
+            QVector3D axis = QVector3D::crossProduct(from, to).normalized();
+            float angleDeg = qRadiansToDegrees(std::acos(qBound(-1.0f, dotVal, 1.0f)));
+            R.rotate(angleDeg, axis);
+        }
+        QMatrix4x4 mvpE = proj * view * model * R;
+        drawHandle(m_extrude1DH, col(GizmoHandle::Normal), mvpE);
+        break;
+    }
     }
 
     // Draw a small center marker (always) to visualise the computed gizmo center.
@@ -643,6 +674,9 @@ GizmoHandle Gizmo::pickAll(const QVector3D& O, const QVector3D& D) const
         test(GizmoHandle::Y,   m_scaleH[1]);
         test(GizmoHandle::Z,   m_scaleH[2]);
         break;
+    case GizmoMode::Extrude1D:
+        test(GizmoHandle::Normal, m_extrude1DH);
+        break;
     }
     return best;
 }
@@ -655,6 +689,30 @@ GizmoHandle Gizmo::pick(const QVector3D& rayO, const QVector3D& rayD,
     QMatrix4x4 T; T.setToIdentity(); T.translate(m_position / s);
     QMatrix4x4 S; S.setToIdentity(); S.scale(s);
     QMatrix4x4 model = S * T;
+
+    // For Extrude1D, the draw transform is model * R (rotation maps +Y to m_extrudeAxis).
+    // We must invert the same combined transform so the pick ray lands in the same local space.
+    if (m_mode == GizmoMode::Extrude1D) {
+        QVector3D from(0, 1, 0);
+        QVector3D to = m_extrudeAxis.normalized();
+        QMatrix4x4 R; R.setToIdentity();
+        float dotVal = QVector3D::dotProduct(from, to);
+        if (dotVal < -0.9999f) {
+            QVector3D perp = (qAbs(from.x()) < 0.9f)
+                             ? QVector3D::crossProduct(from, QVector3D(1,0,0)).normalized()
+                             : QVector3D::crossProduct(from, QVector3D(0,0,1)).normalized();
+            R.rotate(180.0f, perp);
+        } else if (dotVal < 0.9999f) {
+            QVector3D axis = QVector3D::crossProduct(from, to).normalized();
+            float angleDeg = qRadiansToDegrees(std::acos(qBound(-1.0f, dotVal, 1.0f)));
+            R.rotate(angleDeg, axis);
+        }
+        QMatrix4x4 inv = (model * R).inverted();
+        QVector4D lo = inv * QVector4D(rayO, 1.f);
+        QVector4D ld = inv * QVector4D(rayD, 0.f);
+        return pickAll({lo.x(),lo.y(),lo.z()}, {ld.x(),ld.y(),ld.z()});
+    }
+
     QMatrix4x4 inv = model.inverted();
     QVector4D lo = inv * QVector4D(rayO, 1.f);
     QVector4D ld = inv * QVector4D(rayD, 0.f);
@@ -741,6 +799,12 @@ void Gizmo::beginDrag(GizmoHandle handle,
             break;
         default: break;
         }
+    } else if (m_mode == GizmoMode::Extrude1D) {
+        m_dragAxis      = m_extrudeAxis;
+        m_dragAnchorPos = m_position;  // freeze anchor so updateDrag is stable even as m_position moves
+        m_dragStartT    = QVector3D::dotProduct(
+                              rayOnAxis(rayO, rayD, m_dragAxis, camDir) - m_position,
+                              m_dragAxis);
     } else { // Rotate
         m_dragAxis        = axisVec(handle);
         m_dragPlaneNormal = m_dragAxis;
@@ -806,6 +870,27 @@ Gizmo::DragDelta Gizmo::updateDrag(const QVector3D& rayO, const QVector3D& rayD,
             delta.scaleFactor = 1.0f + (t - m_dragStartT) / norm;
             delta.scaleFactor = qMax(0.01f, delta.scaleFactor);
         }
+        break;
+    }
+
+    case GizmoMode::Extrude1D: {
+        // Use the frozen anchor position (not moving m_position) so the projection
+        // plane stays fixed throughout the drag — prevents feedback/drift.
+        QVector3D anchorCamDir = (m_dragAnchorPos - camPos).normalized();
+        QVector3D p1 = perp1(m_dragAxis), p2 = perp2(m_dragAxis);
+        QVector3D planeN = (qAbs(QVector3D::dotProduct(p1, anchorCamDir)) >
+                            qAbs(QVector3D::dotProduct(p2, anchorCamDir))) ? p1 : p2;
+        float denom = QVector3D::dotProduct(rayD, planeN);
+        QVector3D hit;
+        if (qAbs(denom) < 1e-6f) {
+            float t2 = QVector3D::dotProduct(m_dragAnchorPos - rayO, rayD);
+            hit = rayO + rayD * t2;
+        } else {
+            float t2 = QVector3D::dotProduct(m_dragAnchorPos - rayO, planeN) / denom;
+            hit = rayO + rayD * t2;
+        }
+        float t = QVector3D::dotProduct(hit - m_dragAnchorPos, m_dragAxis);
+        delta.translate = m_dragAxis * (t - m_dragStartT);
         break;
     }
     }

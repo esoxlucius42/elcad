@@ -12,9 +12,13 @@
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepAdaptor_Surface.hxx>
+#include <GeomLProp_SLProps.hxx>
 #include <Poly_Triangulation.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopAbs_Orientation.hxx>
 #include <gp_Vec.hxx>
+#include <gp_Dir.hxx>
 #include <gp_Trsf.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
@@ -114,30 +118,44 @@ ExtrudeResult ExtrudeOperation::extrudeFace(const TopoDS_Face& face, const Extru
              params.distance, params.mode, params.symmetric);
 
     try {
-        // Attempt to obtain a triangulation for a robust normal estimate
-        TopLoc_Location loc;
-        Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
-        if (tri.IsNull()) {
-            result.errorMsg = "Face has no triangulation — please tessellate the shape first.";
-            LOG_ERROR("extrudeFace failed — no triangulation available for face");
-            return result;
-        }
+        // Derive the outward face normal from the OCCT surface geometry,
+        // honouring face orientation.  This is more reliable than estimating
+        // from triangle winding order, which depends on tessellation details.
+        BRepAdaptor_Surface adapt(face);
+        double uMid = (adapt.FirstUParameter() + adapt.LastUParameter()) * 0.5;
+        double vMid = (adapt.FirstVParameter() + adapt.LastVParameter()) * 0.5;
+        GeomLProp_SLProps props(adapt.Surface().Surface(), uMid, vMid, 1, 1e-6);
 
-        // Use the first triangle to estimate a consistent normal direction
-        Standard_Integer n1, n2, n3;
-        tri->Triangle(1).Get(n1, n2, n3);
-        gp_Pnt p1 = tri->Node(n1).Transformed(loc);
-        gp_Pnt p2 = tri->Node(n2).Transformed(loc);
-        gp_Pnt p3 = tri->Node(n3).Transformed(loc);
-        gp_Vec e1(p1, p2), e2(p1, p3);
-        gp_Vec n = e1.Crossed(e2);
-        double len = n.Magnitude();
-        if (len < 1e-12) {
-            result.errorMsg = "Could not determine face normal (degenerate triangulation).";
-            LOG_ERROR("extrudeFace failed — degenerate triangulation with near-zero normal");
-            return result;
+        gp_Vec n;
+        if (props.IsNormalDefined()) {
+            gp_Dir dir = props.Normal();
+            if (face.Orientation() == TopAbs_REVERSED)
+                dir.Reverse();
+            n = gp_Vec(dir);
+        } else {
+            // Fallback: estimate from triangulation if surface normal unavailable
+            TopLoc_Location loc;
+            Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+            if (tri.IsNull()) {
+                result.errorMsg = "Face has no triangulation and surface normal is undefined.";
+                LOG_ERROR("extrudeFace failed — no triangulation and surface normal undefined");
+                return result;
+            }
+            Standard_Integer n1, n2, n3;
+            tri->Triangle(1).Get(n1, n2, n3);
+            gp_Pnt p1 = tri->Node(n1).Transformed(loc);
+            gp_Pnt p2 = tri->Node(n2).Transformed(loc);
+            gp_Pnt p3 = tri->Node(n3).Transformed(loc);
+            gp_Vec e1(p1, p2), e2(p1, p3);
+            n = e1.Crossed(e2);
+            double len = n.Magnitude();
+            if (len < 1e-12) {
+                result.errorMsg = "Could not determine face normal (degenerate triangulation).";
+                LOG_ERROR("extrudeFace failed — degenerate triangulation with near-zero normal");
+                return result;
+            }
+            n /= len;
         }
-        n /= len;
 
         double d = params.distance;
         if (params.symmetric) {

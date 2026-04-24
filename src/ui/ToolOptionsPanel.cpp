@@ -100,6 +100,21 @@ void ToolOptionsPanel::buildExtrudePage()
         emit cancelled();
     });
 
+    // Emit live-preview signal whenever any parameter changes
+    auto emitExtrudeParamsChanged = [this] {
+        ExtrudeParams p;
+        p.distance  = m_extrudeDist->value();
+        p.mode      = m_extrudeMode->currentIndex();
+        p.symmetric = m_extrudeSym->isChecked();
+        emit extrudeParamsChanged(p);
+    };
+    connect(m_extrudeDist, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, [emitExtrudeParamsChanged](double) { emitExtrudeParamsChanged(); });
+    connect(m_extrudeMode, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [emitExtrudeParamsChanged](int) { emitExtrudeParamsChanged(); });
+    connect(m_extrudeSym, &QCheckBox::toggled,
+            this, [emitExtrudeParamsChanged](bool) { emitExtrudeParamsChanged(); });
+
     m_stack->addWidget(page); // index 1
 }
 
@@ -138,6 +153,10 @@ void ToolOptionsPanel::buildMirrorPage()
         showIdle();
         emit cancelled();
     });
+
+    // Emit live-preview signal whenever the selected plane changes
+    connect(m_mirrorPlane, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this](int plane) { emit mirrorPlaneChanged(plane); });
 
     m_stack->addWidget(page); // index 2
 }
@@ -196,6 +215,27 @@ void ToolOptionsPanel::showIdle()
 void ToolOptionsPanel::showExtrude()
 {
     m_stack->setCurrentIndex(Page::Extrude);
+}
+
+void ToolOptionsPanel::setExtrudeDistance(double dist)
+{
+    m_extrudeDist->setValue(dist);
+}
+
+void ToolOptionsPanel::setExtrudeDistanceSilent(double dist)
+{
+    m_extrudeDist->blockSignals(true);
+    m_extrudeDist->setValue(dist);
+    m_extrudeDist->blockSignals(false);
+}
+
+ExtrudeParams ToolOptionsPanel::currentExtrudeParams() const
+{
+    ExtrudeParams p;
+    p.distance  = m_extrudeDist->value();
+    p.mode      = m_extrudeMode->currentIndex();
+    p.symmetric = m_extrudeSym->isChecked();
+    return p;
 }
 
 void ToolOptionsPanel::showMirror()

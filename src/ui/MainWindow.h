@@ -1,5 +1,6 @@
 #pragma once
 #include <QMainWindow>
+#include <QTimer>
 #include "document/Document.h"
 #include "tools/SketchTool.h"
 #include "ui/ExtrudeDialog.h"
@@ -63,6 +64,22 @@ private:
     std::function<void(ExtrudeParams)>     m_pendingExtrudeFn;
     std::function<void(int)>               m_pendingMirrorFn;
     std::function<void(quint64, quint64)>  m_pendingBooleanFn;
+
+    // Preview shape computation closures (set alongside pending fns; call renderer directly)
+    std::function<void(ExtrudeParams)>     m_pendingExtrudePreviewFn;
+    std::function<void(int)>               m_pendingMirrorPreviewFn;
+
+    // Preview helpers — compute OCCT shape without committing to the document
+    void recomputeExtrudePreview(ExtrudeParams params);
+    void recomputeMirrorPreview(int plane);
+    // Rate-limited preview scheduler for extrude (starts timer only if not already active)
+    void scheduleExtrudePreview(ExtrudeParams params);
+
+    // Stores the most recent extrude params so the rate-limit timer can read them on fire
+    ExtrudeParams m_latestExtrudeParams;
+
+    // Timer shared by extrude and mirror previews (single-shot, OCCT is slow)
+    QTimer* m_previewTimer{nullptr};
 
     // Undo/Redo actions (kept to update text and enabled state)
     QAction* m_actUndo{nullptr};

@@ -78,6 +78,39 @@ void ViewportWidget::setGizmoMode(GizmoMode mode)
     update();
 }
 
+void ViewportWidget::enterExtrudeGizmoMode(const QVector3D& origin, const QVector3D& normal, double startDist)
+{
+    Gizmo& g = m_renderer.gizmo();
+    m_extrudeGizmoOrigin   = origin;
+    m_extrudeGizmoNormal   = normal.normalized();
+    m_extrudeDragStartDist = startDist;
+    // Place the gizmo handle on the extruded face (not at the base sketch/face)
+    g.setPosition(origin + m_extrudeGizmoNormal * static_cast<float>(startDist));
+    g.setExtrudeAxis(normal);
+    g.setMode(GizmoMode::Extrude1D);
+    g.setVisible(true);
+    update();
+}
+
+void ViewportWidget::setExtrudeGizmoDistance(double dist)
+{
+    m_renderer.gizmo().setPosition(
+        m_extrudeGizmoOrigin + m_extrudeGizmoNormal * static_cast<float>(dist));
+    update();
+}
+
+void ViewportWidget::exitExtrudeGizmoMode()
+{
+    Gizmo& g = m_renderer.gizmo();
+    if (g.mode() == GizmoMode::Extrude1D) {
+        g.setVisible(false);
+        g.endDrag();
+    }
+    if (m_dragMode == DragMode::ExtrudeGizmoDrag)
+        m_dragMode = DragMode::None;
+    update();
+}
+
 void ViewportWidget::enterSketchMode(Sketch* sketch)
 {
     m_sketch      = sketch;
@@ -121,6 +154,25 @@ QVector2D ViewportWidget::screenToSketch(QPoint screenPos) const
 
 void ViewportWidget::mousePressEvent(QMouseEvent* e)
 {
+    // ── Extrude 1D gizmo: takes priority over sketch tool when Extrude1D is active ──
+    if (e->button() == Qt::LeftButton &&
+        m_renderer.gizmo().visible() &&
+        m_renderer.gizmo().mode() == GizmoMode::Extrude1D) {
+        QVector3D ro, rd;
+        m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
+        GizmoHandle handle = m_renderer.gizmo().pick(ro, rd, m_camera.position(),
+                                                      width(), height(), m_camera.fov());
+        if (handle != GizmoHandle::None) {
+            m_lmbDown     = true;
+            m_lmbPressPos = e->pos();
+            m_dragMode    = DragMode::ExtrudeGizmoDrag;
+            m_renderer.gizmo().beginDrag(handle, ro, rd,
+                                          m_camera.position(), width(), height(), m_camera.fov());
+            update();
+            return;
+        }
+    }
+
     // ── Sketch mode ───────────────────────────────────────────────────────────
     if (m_sketch && m_activeTool) {
         if (e->button() != Qt::MiddleButton && e->button() != Qt::RightButton) {
@@ -202,6 +254,10 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
         if (m_dragMode == DragMode::GizmoDrag) {
             commitGizmoDrag();
             m_dragMode = DragMode::None;
+        } else if (m_dragMode == DragMode::ExtrudeGizmoDrag) {
+            m_renderer.gizmo().endDrag();
+            m_dragMode = DragMode::None;
+            emit extrudeGizmoDragFinished(m_extrudeGizmoCurrDist);
         } else if (m_dragMode == DragMode::BoxSelect) {
             m_rubberBand->hide();
             m_dragMode = DragMode::None;
@@ -269,6 +325,21 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
             m_renderer.invalidateMesh(m_gizmoDragBody->id());
         }
 #endif
+        update();
+        return;
+    } else if (m_dragMode == DragMode::ExtrudeGizmoDrag) {
+        QVector3D ro, rd;
+        m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
+        Gizmo::DragDelta delta = m_renderer.gizmo().updateDrag(ro, rd,
+                                    m_camera.position(), width(), height(), m_camera.fov());
+        double newDist = m_extrudeDragStartDist
+                       + static_cast<double>(QVector3D::dotProduct(delta.translate, m_extrudeGizmoNormal));
+        newDist = qMax(0.01, newDist);
+        m_extrudeGizmoCurrDist = newDist;
+        // Move the gizmo handle to reflect the current extrude distance
+        m_renderer.gizmo().setPosition(
+            m_extrudeGizmoOrigin + m_extrudeGizmoNormal * static_cast<float>(newDist));
+        emit extrudeGizmoDragged(newDist);
         update();
         return;
     } else if (m_lmbDown && !m_sketch) {

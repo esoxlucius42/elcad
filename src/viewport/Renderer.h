@@ -39,6 +39,12 @@ public:
     void invalidateMesh(quint64 bodyId);
     void clearMeshCache();
 
+#ifdef ELCAD_HAVE_OCCT
+    // Set / clear a ghosted preview shape shown while a tool is active.
+    void setPreviewShape(const TopoDS_Shape& shape);
+#endif
+    void clearPreviewShape();
+
     // Ray-pick: returns the closest visible body hit by the ray, or nullptr.
     Body* pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc);
 
@@ -50,6 +56,11 @@ public:
 
     // Expand a clicked triangle into a connected coplanar set. Returns triangle indices.
     std::vector<int> expandFaceSelection(Body* body, int startTri, float angleDeg = 10.0f, float distanceTol = 1e-3f);
+
+    // Return the unit normal of a specific triangle on the body's mesh, or {0,1,0} if unavailable.
+    QVector3D triangleNormal(Body* body, int triIndex);
+    // Return the centroid of a specific triangle on the body's mesh, or {0,0,0} if unavailable.
+    QVector3D triangleCentroid(Body* body, int triIndex);
 
 #ifdef ELCAD_HAVE_OCCT
     // Build a TopoDS_Face from a set of mesh triangle indices. Returns a null face on failure.
@@ -95,6 +106,16 @@ private:
 
     // Body ID → mesh buffer cache
     std::unordered_map<quint64, std::unique_ptr<MeshBuffer>> m_meshCache;
+
+    // Preview ghost shape (shown while Extrude/Mirror tool is active).
+    // The shape is stored here and the MeshBuffer is built lazily inside render()
+    // (where an OpenGL context is guaranteed to be current).
+    std::unique_ptr<MeshBuffer> m_previewMesh;
+    bool                        m_hasPreview{false};
+    bool                        m_previewDirty{false};
+#ifdef ELCAD_HAVE_OCCT
+    TopoDS_Shape                m_previewShape;  // pending shape waiting for GL upload
+#endif
 
     // One-time GL buffers for highlights to avoid realloc each frame
     GLuint m_highlightVao{0};

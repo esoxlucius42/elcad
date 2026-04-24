@@ -31,12 +31,26 @@ public:
     void showBooleanUnion();
     void showBooleanSubtract();
 
+    // Set the extrude distance spinbox value (triggers live-preview chain).
+    void setExtrudeDistance(double dist);
+
+    // Set the extrude distance without emitting extrudeParamsChanged.
+    // Use this when the caller will trigger the preview directly.
+    void setExtrudeDistanceSilent(double dist);
+
+    // Return current extrude params from the UI controls.
+    ExtrudeParams currentExtrudeParams() const;
+
 signals:
     void extrudeRequested(ExtrudeParams params);
     void mirrorRequested(int mirrorPlane);
     void booleanUnionRequested(quint64 targetId, quint64 toolId);
     void booleanSubtractRequested(quint64 targetId, quint64 toolId);
     void cancelled();
+
+    // Live-preview signals — emitted as parameters change (before Apply is clicked)
+    void extrudeParamsChanged(ExtrudeParams params);
+    void mirrorPlaneChanged(int plane);
 
 private:
     void buildIdlePage();

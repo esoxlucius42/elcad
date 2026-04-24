@@ -385,13 +385,20 @@ void MainWindow::setupDocks()
     // ── Wire ToolOptionsPanel ───────────────────────────────────────────────
     connect(m_toolOptionsPanel, &ToolOptionsPanel::extrudeRequested,
             this, [this](ExtrudeParams params) {
+        if (m_previewTimer) m_previewTimer->stop();
+        m_viewport->renderer().clearPreviewShape();
+        m_viewport->exitExtrudeGizmoMode();
         if (m_pendingExtrudeFn) m_pendingExtrudeFn(params);
         m_pendingExtrudeFn = {};
+        m_pendingExtrudePreviewFn = {};
     });
     connect(m_toolOptionsPanel, &ToolOptionsPanel::mirrorRequested,
             this, [this](int plane) {
+        if (m_previewTimer) m_previewTimer->stop();
+        m_viewport->renderer().clearPreviewShape();
         if (m_pendingMirrorFn) m_pendingMirrorFn(plane);
         m_pendingMirrorFn = {};
+        m_pendingMirrorPreviewFn = {};
     });
     connect(m_toolOptionsPanel, &ToolOptionsPanel::booleanUnionRequested,
             this, [this](quint64 targetId, quint64 toolId) {
@@ -405,10 +412,20 @@ void MainWindow::setupDocks()
     });
     connect(m_toolOptionsPanel, &ToolOptionsPanel::cancelled,
             this, [this] {
+        if (m_previewTimer) m_previewTimer->stop();
+        m_viewport->renderer().clearPreviewShape();
+        m_viewport->exitExtrudeGizmoMode();
+        m_viewport->update();
         m_pendingExtrudeFn = {};
         m_pendingMirrorFn  = {};
         m_pendingBooleanFn = {};
+        m_pendingExtrudePreviewFn = {};
+        m_pendingMirrorPreviewFn  = {};
     });
+
+    // Debounce timer for live preview recomputation
+    m_previewTimer = new QTimer(this);
+    m_previewTimer->setSingleShot(true);
 }
 
 // ── Status Bar ────────────────────────────────────────────────────────────────
@@ -680,7 +697,111 @@ void MainWindow::onExtrude()
         m_document->clearSelection();
     };
 
+    // Build a preview closure that computes the same shape but never mutates Document
+    m_pendingExtrudePreviewFn = [this, faceExtrude, faceBody, faceTriIndex, sketch]
+                                 (ExtrudeParams params) {
+        ExtrudeResult res;
+        Body* targetBody = nullptr;
+
+        if (faceExtrude) {
+            if (!faceBody || !faceBody->hasShape()) return;
+
+            int faceOrd = m_viewport->renderer().faceOrdinalForTriangle(faceBody, faceTriIndex);
+            if (faceOrd < 0) return;
+
+            TopoDS_Face occtFace;
+            int idx = 0;
+            for (TopExp_Explorer exp(faceBody->shape(), TopAbs_FACE); exp.More(); exp.Next(), ++idx) {
+                if (idx == faceOrd) { occtFace = TopoDS::Face(exp.Current()); break; }
+            }
+
+            if (occtFace.IsNull()) {
+                std::vector<int> tris;
+                for (const auto& s : m_document->selectionItems()) {
+                    if (s.type == Document::SelectedItem::Type::Face && s.bodyId == faceBody->id())
+                        tris.push_back(s.index);
+                }
+                if (tris.empty())
+                    tris = m_viewport->renderer().expandFaceSelection(faceBody, faceTriIndex, 10.0f, 1e-3f);
+                if (!tris.empty())
+                    occtFace = m_viewport->renderer().buildFaceFromTriangles(faceBody, tris);
+            }
+            if (occtFace.IsNull()) return;
+
+            res = ExtrudeOperation::extrudeFace(occtFace, params);
+            targetBody = faceBody;
+        } else {
+            if (!sketch) return;
+            res = ExtrudeOperation::extrude(*sketch, params);
+            targetBody = m_document->singleSelectedBody();
+        }
+
+        if (!res.success) return;
+
+        TopoDS_Shape previewShape = res.shape;
+        if (params.mode != 0 && targetBody && targetBody->hasShape()) {
+            ExtrudeResult boolRes = (params.mode == 1)
+                ? ExtrudeOperation::booleanAdd(targetBody->shape(), res.shape)
+                : ExtrudeOperation::booleanCut(targetBody->shape(), res.shape);
+            if (!boolRes.success) return;
+            previewShape = boolRes.shape;
+        }
+
+        if (!previewShape.IsNull()) {
+            m_viewport->renderer().setPreviewShape(previewShape);
+            m_viewport->update();
+        }
+    };
+
     m_toolOptionsPanel->showExtrude();
+
+    // Connect live-preview: recompute whenever params change (debounced)
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::extrudeParamsChanged,
+            this, &MainWindow::recomputeExtrudePreview,
+            Qt::UniqueConnection);
+
+    // Trigger an initial preview with the current (default) params
+    ExtrudeParams initial;
+    initial.distance  = 10.0;
+    initial.mode      = 0;
+    initial.symmetric = false;
+    recomputeExtrudePreview(initial);
+
+    // Set up the extrude 1D gizmo — single arrow along the extrude normal.
+    {
+        QVector3D gizmoOrigin;
+        QVector3D gizmoNormal;
+        if (!faceExtrude && sketch) {
+            gizmoOrigin = sketch->plane().origin();
+            gizmoNormal = sketch->plane().normal();
+        } else if (faceExtrude && faceBody) {
+            gizmoNormal = m_viewport->renderer().triangleNormal(faceBody, faceTriIndex);
+            gizmoOrigin = m_viewport->renderer().triangleCentroid(faceBody, faceTriIndex);
+        }
+        if (gizmoNormal.lengthSquared() > 0.f) {
+            m_viewport->enterExtrudeGizmoMode(gizmoOrigin, gizmoNormal, initial.distance);
+            // During gizmo drag: update spinbox silently and call preview immediately
+            // (bypasses the debounce timer so the viewport stays in sync with the drag)
+            connect(m_viewport, &ViewportWidget::extrudeGizmoDragged,
+                    this, [this](double dist) {
+                // Update spinbox instantly (no OCCT, no blocking)
+                m_toolOptionsPanel->setExtrudeDistanceSilent(dist);
+                ExtrudeParams p = m_toolOptionsPanel->currentExtrudeParams();
+                p.distance = dist;
+                // Schedule OCCT preview (rate-limited — fires ASAP, at most once per
+                // event-loop iteration, so the preview shape follows the gizmo smoothly)
+                scheduleExtrudePreview(p);
+            }, Qt::UniqueConnection);
+            connect(m_viewport, &ViewportWidget::extrudeGizmoDragFinished,
+                    this, [this](double /*dist*/) {
+                // On release, force one final preview at the settled distance so the
+                // shape is always accurate even if the last timer tick was skipped
+                m_previewTimer->stop();
+                if (m_pendingExtrudePreviewFn)
+                    m_pendingExtrudePreviewFn(m_latestExtrudeParams);
+            }, Qt::UniqueConnection);
+        }
+    }
 #else
     QMessageBox::information(this, "Extrude", "OCCT not available.");
 #endif
@@ -728,7 +849,71 @@ void MainWindow::onMirror()
         emit m_document->bodyChanged(b);
     };
 
+    // Build a preview closure: compute mirrored shape without mutating Document
+    m_pendingMirrorPreviewFn = [this, bodyId](int plane) {
+        Body* b = m_document->bodyById(bodyId);
+        if (!b || !b->hasShape()) return;
+        TopoDS_Shape mirrored = TransformOps::mirror(b->shape(), plane);
+        if (!mirrored.IsNull()) {
+            m_viewport->renderer().setPreviewShape(mirrored);
+            m_viewport->update();
+        }
+    };
+
     m_toolOptionsPanel->showMirror();
+
+    // Connect live-preview: recompute whenever plane changes
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::mirrorPlaneChanged,
+            this, &MainWindow::recomputeMirrorPreview,
+            Qt::UniqueConnection);
+
+    // Trigger an initial preview with the default plane (XZ = 0)
+    recomputeMirrorPreview(0);
+#endif
+}
+
+void MainWindow::recomputeExtrudePreview(ExtrudeParams params)
+{
+#ifdef ELCAD_HAVE_OCCT
+    // Move gizmo immediately so it tracks the spinbox without waiting for OCCT
+    m_viewport->setExtrudeGizmoDistance(params.distance);
+    scheduleExtrudePreview(params);
+#else
+    Q_UNUSED(params)
+#endif
+}
+
+void MainWindow::scheduleExtrudePreview(ExtrudeParams params)
+{
+#ifdef ELCAD_HAVE_OCCT
+    m_latestExtrudeParams = params;
+    // Rate-limit: only start a new timer tick if none is already pending.
+    // This means during continuous drag the timer fires once per event-loop
+    // iteration (0 ms delay = ASAP) rather than being reset on every event.
+    if (!m_previewTimer->isActive()) {
+        m_previewTimer->disconnect();
+        connect(m_previewTimer, &QTimer::timeout, this, [this] {
+            if (m_pendingExtrudePreviewFn)
+                m_pendingExtrudePreviewFn(m_latestExtrudeParams);
+        });
+        m_previewTimer->start(0);
+    }
+#else
+    Q_UNUSED(params)
+#endif
+}
+
+void MainWindow::recomputeMirrorPreview(int plane)
+{
+#ifdef ELCAD_HAVE_OCCT
+    m_previewTimer->disconnect();
+    connect(m_previewTimer, &QTimer::timeout, this, [this, plane] {
+        if (m_pendingMirrorPreviewFn)
+            m_pendingMirrorPreviewFn(plane);
+    });
+    m_previewTimer->start(200);
+#else
+    Q_UNUSED(plane)
 #endif
 }
 

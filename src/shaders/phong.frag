@@ -13,8 +13,10 @@ uniform vec3 uSkyColor;
 uniform vec3 uGroundColor;
 
 // Fill light (diffuse only)
-uniform vec3 uFillDir;
-uniform vec3 uFillColor;
+uniform vec3  uFillDir;
+uniform vec3  uFillColor;
+
+uniform float uAlpha;  // 1.0 for opaque bodies; < 1.0 for preview ghost
 
 out vec4 fragColor;
 
@@ -41,5 +43,5 @@ void main()
     vec3  specular = spec * 0.3 * uLightColor;
 
     vec3 result = (ambient + diffuse + fillDiffuse + specular) * uObjectColor;
-    fragColor = vec4(result, 1.0);
+    fragColor = vec4(result, uAlpha);
 }
