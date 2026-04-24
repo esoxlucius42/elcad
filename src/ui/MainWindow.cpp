@@ -756,9 +756,10 @@ void MainWindow::onExtrude()
     m_toolOptionsPanel->showExtrude();
 
     // Connect live-preview: recompute whenever params change (debounced)
+    disconnect(m_toolOptionsPanel, &ToolOptionsPanel::extrudeParamsChanged,
+               this, &MainWindow::recomputeExtrudePreview);
     connect(m_toolOptionsPanel, &ToolOptionsPanel::extrudeParamsChanged,
-            this, &MainWindow::recomputeExtrudePreview,
-            Qt::UniqueConnection);
+            this, &MainWindow::recomputeExtrudePreview);
 
     // Trigger an initial preview with the current (default) params
     ExtrudeParams initial;
@@ -780,6 +781,8 @@ void MainWindow::onExtrude()
         }
         if (gizmoNormal.lengthSquared() > 0.f) {
             m_viewport->enterExtrudeGizmoMode(gizmoOrigin, gizmoNormal, initial.distance);
+            disconnect(m_viewport, &ViewportWidget::extrudeGizmoDragged, this, nullptr);
+            disconnect(m_viewport, &ViewportWidget::extrudeGizmoDragFinished, this, nullptr);
             // During gizmo drag: update spinbox silently and call preview immediately
             // (bypasses the debounce timer so the viewport stays in sync with the drag)
             connect(m_viewport, &ViewportWidget::extrudeGizmoDragged,
@@ -791,7 +794,7 @@ void MainWindow::onExtrude()
                 // Schedule OCCT preview (rate-limited — fires ASAP, at most once per
                 // event-loop iteration, so the preview shape follows the gizmo smoothly)
                 scheduleExtrudePreview(p);
-            }, Qt::UniqueConnection);
+            });
             connect(m_viewport, &ViewportWidget::extrudeGizmoDragFinished,
                     this, [this](double /*dist*/) {
                 // On release, force one final preview at the settled distance so the
@@ -799,7 +802,7 @@ void MainWindow::onExtrude()
                 m_previewTimer->stop();
                 if (m_pendingExtrudePreviewFn)
                     m_pendingExtrudePreviewFn(m_latestExtrudeParams);
-            }, Qt::UniqueConnection);
+            });
         }
     }
 #else
@@ -863,9 +866,10 @@ void MainWindow::onMirror()
     m_toolOptionsPanel->showMirror();
 
     // Connect live-preview: recompute whenever plane changes
+    disconnect(m_toolOptionsPanel, &ToolOptionsPanel::mirrorPlaneChanged,
+               this, &MainWindow::recomputeMirrorPreview);
     connect(m_toolOptionsPanel, &ToolOptionsPanel::mirrorPlaneChanged,
-            this, &MainWindow::recomputeMirrorPreview,
-            Qt::UniqueConnection);
+            this, &MainWindow::recomputeMirrorPreview);
 
     // Trigger an initial preview with the default plane (XZ = 0)
     recomputeMirrorPreview(0);

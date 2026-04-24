@@ -97,10 +97,8 @@ void Renderer::render(Camera& camera, Document* doc,
         }
 
         if (m_previewMesh && !m_previewMesh->isEmpty() && m_phong.isValid()) {
-            glDepthMask(GL_FALSE);
-            glDisable(GL_CULL_FACE);
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            // FR-001, FR-002: Enable camera-facing preview rendering
+            setupPreviewRenderState();
 
             QMatrix4x4 model;
             QMatrix3x3 normalMat = model.normalMatrix();
@@ -121,8 +119,7 @@ void Renderer::render(Camera& camera, Document* doc,
             m_previewMesh->drawTriangles();
             m_phong.release();
 
-            glDepthMask(GL_TRUE);
-            glEnable(GL_CULL_FACE);
+            restoreDefaultRenderState();
         }
     }
 #endif
@@ -158,7 +155,7 @@ void Renderer::render(Camera& camera, Document* doc,
     }
 
     // ── Completed sketch overlays (shown when not actively editing) ───────────
-    if (!m_activeSketch && doc) {
+    if (!m_activeSketch && doc && !m_hasPreview) {
         const auto& selection = doc->selectionItems();
 
         for (const auto& sketchPtr : doc->sketches()) {
@@ -840,5 +837,24 @@ TopoDS_Face Renderer::buildFaceFromTriangles(Body* body, const std::vector<int>&
 }
 #endif
 
-} // namespace elcad
+// ── Preview render state helpers ─────────────────────────────────────────────
+// FR-001, FR-002: Preview must show camera-facing surfaces only.
+// Setup translucent ghost rendering with back-face culling enabled.
+void Renderer::setupPreviewRenderState()
+{
+    glDepthMask(GL_FALSE);       // No depth writes (ghost effect)
+    glEnable(GL_CULL_FACE);      // Enable back-face culling (FIX: was disabled)
+    glCullFace(GL_BACK);         // Cull back faces
+    glFrontFace(GL_CCW);         // Counter-clockwise winding is front-facing
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
 
+// Restore default render state after preview pass
+void Renderer::restoreDefaultRenderState()
+{
+    glDepthMask(GL_TRUE);        // Re-enable depth writes
+    glEnable(GL_CULL_FACE);      // Keep culling enabled (default state)
+}
+
+} // namespace elcad

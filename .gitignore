@@ -36,3 +36,7 @@ ui_*.h
 *~
 .DS_Store
 Thumbs.db
+
+# Logs and environment
+*.log
+.env*

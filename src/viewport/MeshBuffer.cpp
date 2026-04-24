@@ -84,6 +84,8 @@ void MeshBuffer::build(const TopoDS_Shape& shape, float deflection)
 
         // Build per-node normals by averaging face normals at each node
         // OCCT may or may not have pre-computed normals — compute them from triangles
+        // NOTE: Triangle winding is corrected for reversed faces (line 92, 129) to ensure
+        //       consistent CCW winding for face culling in preview rendering (FR-001, FR-002)
         std::vector<gp_Vec> nodeNormals(tri->NbNodes(), gp_Vec(0,0,0));
 
         for (int t = 1; t <= tri->NbTriangles(); ++t) {

@@ -88,6 +88,10 @@ private:
                   const QVector3D& camPos, Document* doc);
     MeshBuffer* getMeshBuffer(Body* body);
 
+    // Preview rendering helpers (FR-001, FR-002: camera-facing surfaces only)
+    void setupPreviewRenderState();
+    void restoreDefaultRenderState();
+
 
     Grid           m_grid;
     OriginMarker   m_originMarker;
