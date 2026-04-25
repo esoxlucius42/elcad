@@ -353,8 +353,13 @@ bool MeshBuffer::rayIntersectDetailed(const QVector3D& origin, const QVector3D& 
     if (!rayAABB(origin, dir, m_bboxMin, m_bboxMax, bboxT)) return false;
 
     constexpr float kEps = 1e-7f;
-    float minT = std::numeric_limits<float>::max();
-    bool  hit  = false;
+    // Track closest front-facing hit (normal·dir < 0) and any hit as fallback
+    float minFrontT = std::numeric_limits<float>::max();
+    int   minFrontTri = -1;
+    float minAnyT = std::numeric_limits<float>::max();
+    int   minAnyTri = -1;
+    float frontU=0.f, frontV=0.f;
+    float anyU=0.f, anyV=0.f;
 
     // If BVH available, traverse it; otherwise fall back to brute-force loop
     if (!m_bvhNodes.empty() && !m_triOrder.empty()) {
@@ -394,33 +399,34 @@ bool MeshBuffer::rayIntersectDetailed(const QVector3D& origin, const QVector3D& 
                     if (v < 0.f || u + v > 1.f) continue;
 
                     float t = f * QVector3D::dotProduct(edge2, q);
-                    if (t > kEps && t < minT) {
-                        minT = t;
-                        hit  = true;
-                        outU = u;
-                        outV = v;
-                        outTriIndex = tri;
+                    if (!(t > kEps)) continue;
+
+                    // triangle normal (not normalized yet)
+                    QVector3D n = QVector3D::crossProduct(edge1, edge2);
+                    float nlen = std::sqrt(QVector3D::dotProduct(n,n));
+                    float ndot = 0.f;
+                    if (nlen > 1e-9f) ndot = QVector3D::dotProduct(n / nlen, dir);
+
+                    // Prefer front-facing intersections (normal·dir < 0)
+                    if (ndot < 0.f) {
+                        if (t < minFrontT) {
+                            minFrontT = t;
+                            minFrontTri = tri;
+                            frontU = u; frontV = v;
+                        }
+                    }
+
+                    // Always track the closest hit as a fallback
+                    if (t < minAnyT) {
+                        minAnyT = t;
+                        minAnyTri = tri;
+                        anyU = u; anyV = v;
                     }
                 }
             } else {
-                // Near-first traversal: test children AABBs and push far child first so near child is popped first
-                int left = node.left;
-                int right = node.right;
-                float tLeft = std::numeric_limits<float>::max();
-                float tRight = std::numeric_limits<float>::max();
-                bool hitLeft = false, hitRight = false;
-                if (left != -1) hitLeft = rayAABB(origin, dir, m_bvhNodes[left].bmin, m_bvhNodes[left].bmax, tLeft);
-                if (right != -1) hitRight = rayAABB(origin, dir, m_bvhNodes[right].bmin, m_bvhNodes[right].bmax, tRight);
-
-                if (hitLeft && hitRight) {
-                    // push far first
-                    if (tLeft > tRight) { stack.push_back(left); stack.push_back(right); }
-                    else { stack.push_back(right); stack.push_back(left); }
-                } else if (hitLeft) {
-                    stack.push_back(left);
-                } else if (hitRight) {
-                    stack.push_back(right);
-                }
+                // push children (near-first heuristic could be added later)
+                if (node.right != -1) stack.push_back(node.right);
+                if (node.left != -1) stack.push_back(node.left);
             }
         }
     } else {
@@ -448,18 +454,69 @@ bool MeshBuffer::rayIntersectDetailed(const QVector3D& origin, const QVector3D& 
             if (v < 0.f || u + v > 1.f) continue;
 
             float t = f * QVector3D::dotProduct(edge2, q);
-            if (t > kEps && t < minT) {
-                minT = t;
-                hit  = true;
-                outU = u;
-                outV = v;
-                outTriIndex = triIndex;
+            if (!(t > kEps)) continue;
+
+            // triangle normal (not normalized yet)
+            QVector3D n = QVector3D::crossProduct(edge1, edge2);
+            float nlen = std::sqrt(QVector3D::dotProduct(n,n));
+            float ndot = 0.f;
+            if (nlen > 1e-9f) ndot = QVector3D::dotProduct(n / nlen, dir);
+
+            if (ndot < 0.f) {
+                if (t < minFrontT) {
+                    minFrontT = t;
+                    minFrontTri = triIndex;
+                    frontU = u; frontV = v;
+                }
+            }
+
+            if (t < minAnyT) {
+                minAnyT = t;
+                minAnyTri = triIndex;
+                anyU = u; anyV = v;
             }
         }
     }
 
-    if (hit) outT = minT;
-    return hit;
+    // Runtime toggle: prefer front-facing hits only when environment variable
+    // ELCAD_PICK_PREFER_FACING is set. By default prefer the closest hit to
+    // preserve previous behavior for meshes with inconsistent normals.
+    const char* preferEnv = std::getenv("ELCAD_PICK_PREFER_FACING");
+    bool preferFacing = (preferEnv != nullptr);
+
+    if (preferFacing) {
+        if (minFrontTri != -1) {
+            outTriIndex = minFrontTri;
+            outT = minFrontT;
+            outU = frontU;
+            outV = frontV;
+            return true;
+        }
+        if (minAnyTri != -1) {
+            outTriIndex = minAnyTri;
+            outT = minAnyT;
+            outU = anyU;
+            outV = anyV;
+            return true;
+        }
+        return false;
+    } else {
+        if (minAnyTri != -1) {
+            outTriIndex = minAnyTri;
+            outT = minAnyT;
+            outU = anyU;
+            outV = anyV;
+            return true;
+        }
+        if (minFrontTri != -1) {
+            outTriIndex = minFrontTri;
+            outT = minFrontT;
+            outU = frontU;
+            outV = frontV;
+            return true;
+        }
+        return false;
+    }
 }
 
 bool MeshBuffer::rayIntersect(const QVector3D& origin, const QVector3D& dir, float& outT) const

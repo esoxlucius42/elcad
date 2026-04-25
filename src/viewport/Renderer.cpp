@@ -607,12 +607,46 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
         if (!mesh || mesh->isEmpty()) continue;
 
         float t; int triIdx; float u,v;
-        // Detailed per-triangle intersection for accurate selection
-        if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v) && t < minT) {
-            minT = t;
-            closest = body;
-            bestTri = triIdx;
-            bestU = u; bestV = v;
+        int triCount = mesh->triangleCount() / 3;
+        if (triCount > kSelectionTriangleLimit && body->hasBbox()) {
+            // coarse bbox-based pick; return body-level hit only
+            float tAabb;
+            if (rayAabb(rayOrigin, rayDir, body->bboxMin(), body->bboxMax(), tAabb)) {
+                LOG_DEBUG("Ray pick: AABB hit body id={} tAabb={:.4f} triCount={}", body->id(), tAabb, triCount);
+                if (tAabb < minT) {
+                    minT = tAabb;
+                    closest = body;
+                    bestTri = -1;
+                }
+            }
+        } else {
+            if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v) && t < minT) {
+                // compute centroid and face ordinal for verbose diagnostics
+                const auto& pv = mesh->pickVertices();
+                const auto& pi = mesh->pickIndices();
+                QVector3D centroid(0,0,0);
+                size_t base = static_cast<size_t>(triIdx) * 3;
+                if (base + 2 < pi.size()) {
+                    centroid = (pv[pi[base+0]] + pv[pi[base+1]] + pv[pi[base+2]]) / 3.0f;
+                }
+                int faceOrd = mesh->faceOrdinalForTriangle(triIdx);
+                // Detailed pick debug: report ray, hit point, triangle normal and facing
+                QVector3D hitPoint = rayOrigin + rayDir * t;
+                MeshBuffer* dbgMesh = mesh;
+                QVector3D triNormal = dbgMesh->triangleNormal(triIdx);
+                float ndot = QVector3D::dotProduct(triNormal, rayDir);
+                LOG_DEBUG("Ray pick: tri hit body id={} tri={} t={:.4f} u={:.4f} v={:.4f} centroid=({:.3f},{:.3f},{:.3f}) faceOrd={} hitPoint=({:.3f},{:.3f},{:.3f}) rayOrigin=({:.3f},{:.3f},{:.3f}) rayDir=({:.6f},{:.6f},{:.6f}) triNormal=({:.6f},{:.6f},{:.6f}) ndot={:.6f}",
+                          body->id(), triIdx, t, u, v, centroid.x(), centroid.y(), centroid.z(), faceOrd,
+                          hitPoint.x(), hitPoint.y(), hitPoint.z(),
+                          rayOrigin.x(), rayOrigin.y(), rayOrigin.z(),
+                          rayDir.x(), rayDir.y(), rayDir.z(),
+                          triNormal.x(), triNormal.y(), triNormal.z(), ndot);
+
+                minT = t;
+                closest = body;
+                bestTri = triIdx;
+                bestU = u; bestV = v;
+            }
         }
     }
 
@@ -632,8 +666,122 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
     }
 
     outHit = item;
+#ifdef ELCAD_HAVE_OCCT
+    if (closest && bestTri >= 0) {
+        MeshBuffer* m = getMeshBuffer(closest);
+        if (m) {
+            const auto& pv = m->pickVertices();
+            const auto& pi = m->pickIndices();
+            size_t base = static_cast<size_t>(bestTri) * 3;
+            if (base + 2 < pi.size()) {
+                QVector3D c = (pv[pi[base+0]] + pv[pi[base+1]] + pv[pi[base+2]]) / 3.0f;
+                int faceOrd = m->faceOrdinalForTriangle(bestTri);
+                LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f} (tri={} centroid=({:.3f},{:.3f},{:.3f}) faceOrd={})",
+                          outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT, bestTri, c.x(), c.y(), c.z(), faceOrd);
+            } else {
+                LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f} (tri={})",
+                          outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT, bestTri);
+            }
+        } else {
+            LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f} (tri={})",
+                      outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT, bestTri);
+        }
+    } else {
+        LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f}", outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT);
+    }
+#else
     LOG_DEBUG("Ray pick: hit body id={} type={} idx={} t={:.4f}", outHit.bodyId, static_cast<int>(outHit.type), outHit.index, minT);
+#endif
     return true;
+#endif
+}
+
+bool Renderer::pickHitAt(int px, int py, Document* doc, Camera& camera, Document::SelectedItem& outHit)
+{
+#ifndef ELCAD_HAVE_OCCT
+    Q_UNUSED(px) Q_UNUSED(py) Q_UNUSED(doc) Q_UNUSED(camera) Q_UNUSED(outHit)
+    return false;
+#else
+    outHit = {};
+    if (!doc) return false;
+
+    QVector3D rayOrigin, rayDir;
+    camera.unprojectRay(px, py, m_width, m_height, rayOrigin, rayDir);
+    // For perspective, prefer camera position as origin to avoid near-plane-internal hits
+    if (camera.isPerspective()) rayOrigin = camera.position();
+
+    float bestPixelDist = std::numeric_limits<float>::max();
+    float bestT = std::numeric_limits<float>::max();
+    Document::SelectedItem bestItem;
+    bool found = false;
+
+    QMatrix4x4 vp = camera.projectionMatrix() * camera.viewMatrix();
+
+    // Per-body detailed hit check and screen-space projection
+    for (auto& bodyPtr : doc->bodies()) {
+        Body* body = bodyPtr.get();
+        if (!body->visible()) continue;
+        MeshBuffer* mesh = getMeshBuffer(body);
+        if (!mesh || mesh->isEmpty()) continue;
+
+        float t; int triIdx; float u,v;
+        if (!mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v)) continue;
+        if (!(t > 0.f)) continue;
+
+        QVector3D hitPoint = rayOrigin + rayDir * t;
+        QVector4D clip = vp * QVector4D(hitPoint, 1.f);
+        if (clip.w() == 0.f) continue;
+        float ndcX = clip.x() / clip.w();
+        float ndcY = clip.y() / clip.w();
+        int sx = static_cast<int>((ndcX * 0.5f + 0.5f) * m_width);
+        int sy = static_cast<int>((1.f - (ndcY * 0.5f + 0.5f)) * m_height);
+        float pdist = std::hypot(float(sx - px), float(sy - py));
+
+        // Prefer hits near the pixel; break ties by smaller t (closer)
+        if (pdist < bestPixelDist - 0.5f || (std::abs(pdist - bestPixelDist) < 0.5f && t < bestT)) {
+            bestPixelDist = pdist;
+            bestT = t;
+            // Fill SelectedItem similarly to pickHit
+            Document::SelectedItem it;
+            it.bodyId = body->id(); it.index = -1; it.type = Document::SelectedItem::Type::Body;
+
+            if (triIdx >= 0) {
+                float alpha = 1.0f - u - v;
+                const float vertexEps = 1e-3f;
+                const float edgeEps = 0.02f;
+                if (alpha > 1.0f - vertexEps) { it.type = Document::SelectedItem::Type::Vertex; it.index = triIdx * 3 + 0; }
+                else if (u > 1.0f - vertexEps) { it.type = Document::SelectedItem::Type::Vertex; it.index = triIdx * 3 + 1; }
+                else if (v > 1.0f - vertexEps) { it.type = Document::SelectedItem::Type::Vertex; it.index = triIdx * 3 + 2; }
+                else if (alpha < edgeEps || u < edgeEps || v < edgeEps) {
+                    it.type = Document::SelectedItem::Type::Edge;
+                    int edgeLocal = 0;
+                    if (alpha < edgeEps) edgeLocal = 0;
+                    else if (u < edgeEps) edgeLocal = 1;
+                    else edgeLocal = 2;
+                    it.index = triIdx * 3 + edgeLocal;
+                } else {
+                    it.type = Document::SelectedItem::Type::Face;
+                    it.index = triIdx;
+                }
+            }
+            bestItem = it;
+            found = true;
+        }
+    }
+
+    // Threshold: if best projected hit is within this many pixels, accept it
+    const float kPixelThreshold = 12.0f;
+    if (found && bestPixelDist <= kPixelThreshold) {
+        outHit = bestItem;
+        LOG_DEBUG("pickHitAt: choosing body by screen proximity px={},py={} bestDist={} t={} bodyId={}", px, py, bestPixelDist, bestT, outHit.bodyId);
+        return true;
+    }
+
+    // Do NOT fall back to broad AABB-based pick here — prefer no selection when
+    // no per-triangle hit is found under the cursor. This avoids selecting nearby
+    // bodies when clicking empty space.
+    LOG_DEBUG("pickHitAt: no per-triangle hit near pixel px={},py={}", px, py);
+    return false;
 #endif
 }
 
