@@ -1,8 +1,10 @@
 #pragma once
 #include "document/Document.h"
+#include "sketch/SketchProfiles.h"
 #include "sketch/Sketch.h"
 #include <QVector2D>
 #include <QVector3D>
+#include <optional>
 #include <vector>
 
 namespace elcad {
@@ -49,6 +51,11 @@ public:
     // Detect all minimal bounded faces in the planar arrangement of the sketch's
     // line segments (uses flattenSegments internally).
     static std::vector<Loop> findClosedLoops(const Sketch& sketch, float snapTol = 0.5f);
+
+    static std::vector<SelectedSketchProfile> resolveSelectedProfiles(
+        const Sketch& sketch,
+        const SketchFaceSelection& selection,
+        QString* errorMsg = nullptr);
 
     // Ray-casting point-in-polygon test (handles convex and concave polygons).
     static bool pointInPolygon(QVector2D pt, const std::vector<QVector2D>& poly);

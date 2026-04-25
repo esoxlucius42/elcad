@@ -2,7 +2,7 @@
 
 **Feature Branch**: `001-fix-extrude-preview-normals`  
 **Created**: 2026-04-24  
-**Status**: Draft  
+**Status**: Closed  
 **Input**: User description: "there is a bug when extruding. user selects a face from sketch and clicks extrude tool; then preview is shown but normals apear inverted so user cant see top side of preview or other sides facing him, all he can see is back facing sides that shold be ocluded"
 
 ## User Scenarios & Testing *(mandatory)*

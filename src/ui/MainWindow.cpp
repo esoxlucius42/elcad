@@ -13,6 +13,7 @@
 #include "sketch/SketchPlane.h"
 #include "sketch/Sketch.h"
 #include "sketch/ExtrudeOperation.h"
+#include "sketch/SketchPicker.h"
 #include "document/Document.h"
 #include "document/Body.h"
 #include "document/TransformOps.h"
@@ -38,11 +39,13 @@
 #include <QApplication>
 
 #ifdef ELCAD_HAVE_OCCT
+#include <BRep_Builder.hxx>
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <gp_Ax2.hxx>
 #include <TopExp_Explorer.hxx>
+#include <TopoDS_Compound.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS.hxx>
 #endif
@@ -520,6 +523,18 @@ void MainWindow::updateSketchToolButtons(int activeId)
 void MainWindow::onExtrude()
 {
 #ifdef ELCAD_HAVE_OCCT
+    auto makePreviewShape = [](const std::vector<TopoDS_Shape>& shapes) -> TopoDS_Shape {
+        if (shapes.empty()) return {};
+        if (shapes.size() == 1) return shapes.front();
+
+        BRep_Builder builder;
+        TopoDS_Compound compound;
+        builder.MakeCompound(compound);
+        for (const auto& shape : shapes)
+            builder.Add(compound, shape);
+        return compound;
+    };
+
     // Support extruding either from an active sketch OR from a selected mesh face
     Sketch* sketch = m_document->activeSketch();
     bool faceExtrude = false;
@@ -561,8 +576,29 @@ void MainWindow::onExtrude()
         }
     }
 
+    std::vector<SelectedSketchProfile> selectedProfiles;
+    if (!faceExtrude && sketch) {
+        auto sketchSelection = m_document->selectedSketchFaces(sketch->id());
+        if (sketchSelection) {
+            QString selectionError;
+            selectedProfiles = SketchPicker::resolveSelectedProfiles(*sketch,
+                                                                     *sketchSelection,
+                                                                     &selectionError);
+            if (selectedProfiles.empty()) {
+                LOG_WARN("Extrude: selected sketch faces could not be resolved: {}",
+                         selectionError.toStdString());
+                QMessageBox::warning(this,
+                                     "Extrude",
+                                     selectionError.isEmpty()
+                                         ? "Selected sketch faces could not be resolved for extrusion."
+                                         : selectionError);
+                return;
+            }
+        }
+    }
+
     // Store the resolved state in a closure for deferred execution via the panel
-    m_pendingExtrudeFn = [this, faceExtrude, faceBody, faceTriIndex, sketch](ExtrudeParams params) {
+    m_pendingExtrudeFn = [this, faceExtrude, faceBody, faceTriIndex, sketch, selectedProfiles](ExtrudeParams params) {
         LOG_INFO("Extrude: distance={:.4f} mode={} symmetric={}",
                  params.distance, params.mode, params.symmetric);
 
@@ -625,8 +661,91 @@ void MainWindow::onExtrude()
             res = ExtrudeOperation::extrudeFace(occtFace, params);
             targetBody = faceBody;
         } else {
-            res = ExtrudeOperation::extrude(*sketch, params);
             targetBody = m_document->singleSelectedBody();
+            if (!selectedProfiles.empty()) {
+                const TopoDS_Shape* targetShape =
+                    (params.mode != 0 && targetBody && targetBody->hasShape())
+                        ? &targetBody->shape()
+                        : nullptr;
+
+                ExtrudeBatchResult batch = ExtrudeOperation::extrudeProfiles(selectedProfiles,
+                                                                             params,
+                                                                             targetShape);
+                if (!batch.success) {
+                    LOG_ERROR("Extrude batch failed: {}", batch.errorMsg.toStdString());
+                    QMessageBox::critical(this, "Extrude Failed", batch.errorMsg);
+                    return;
+                }
+
+                if (params.mode == 0 || !targetBody || !targetBody->hasShape()) {
+                    std::vector<quint64> bodyIds;
+                    bodyIds.reserve(batch.solids.size());
+                    for (const auto& solid : batch.solids) {
+                        Body* b = m_document->addBody("Extrusion");
+                        b->setShape(solid);
+                        bodyIds.push_back(b->id());
+                    }
+
+                    auto bodyHolder = std::make_shared<std::vector<std::unique_ptr<Body>>>();
+                    bool firstRedo = true;
+                    m_document->undoStack().push(std::make_unique<LambdaCommand>(
+                        "Extrude New",
+                        [this, bodyIds, bodyHolder]() {
+                            bodyHolder->clear();
+                            for (quint64 bodyId : bodyIds) {
+                                if (auto body = m_document->removeBodyRetain(bodyId))
+                                    bodyHolder->push_back(std::move(body));
+                            }
+                        },
+                        [this, bodyHolder, firstRedo]() mutable {
+                            if (firstRedo) { firstRedo = false; return; }
+                            for (auto& body : *bodyHolder) {
+                                if (body)
+                                    m_document->reinsertBody(std::move(body));
+                            }
+                            bodyHolder->clear();
+                        }));
+                } else {
+                    if (!batch.finalTargetShape.has_value() || batch.finalTargetShape->IsNull()) {
+                        QMessageBox::critical(this, "Extrude Failed", "Extrude did not produce a valid target shape.");
+                        return;
+                    }
+
+                    TopoDS_Shape oldShape = targetBody->shape();
+                    TopoDS_Shape newShape = *batch.finalTargetShape;
+                    m_document->undoStack().push(std::make_unique<LambdaCommand>(
+                        params.mode == 1 ? "Extrude Add" : "Extrude Remove",
+                        [this, id = targetBody->id(), oldShape]() {
+                            if (Body* b = m_document->bodyById(id)) {
+                                b->setShape(oldShape);
+                                m_viewport->renderer().invalidateMesh(id);
+                                emit m_document->bodyChanged(b);
+                            }
+                        },
+                        [this, id = targetBody->id(), newShape]() {
+                            if (Body* b = m_document->bodyById(id)) {
+                                b->setShape(newShape);
+                                m_viewport->renderer().invalidateMesh(id);
+                                emit m_document->bodyChanged(b);
+                            }
+                        }));
+
+                    targetBody->setShape(newShape);
+                    m_viewport->renderer().invalidateMesh(targetBody->id());
+                    emit m_document->bodyChanged(targetBody);
+                }
+
+                if (m_document->activeSketch())
+                    exitSketch();
+
+                if (sketch)
+                    m_document->setSketchVisible(sketch->id(), false);
+
+                m_document->clearSelection();
+                return;
+            }
+
+            res = ExtrudeOperation::extrude(*sketch, params);
         }
 
         if (!res.success) {
@@ -698,7 +817,7 @@ void MainWindow::onExtrude()
     };
 
     // Build a preview closure that computes the same shape but never mutates Document
-    m_pendingExtrudePreviewFn = [this, faceExtrude, faceBody, faceTriIndex, sketch]
+    m_pendingExtrudePreviewFn = [this, faceExtrude, faceBody, faceTriIndex, sketch, selectedProfiles, makePreviewShape]
                                  (ExtrudeParams params) {
         ExtrudeResult res;
         Body* targetBody = nullptr;
@@ -732,8 +851,32 @@ void MainWindow::onExtrude()
             targetBody = faceBody;
         } else {
             if (!sketch) return;
-            res = ExtrudeOperation::extrude(*sketch, params);
             targetBody = m_document->singleSelectedBody();
+            if (!selectedProfiles.empty()) {
+                const TopoDS_Shape* targetShape =
+                    (params.mode != 0 && targetBody && targetBody->hasShape())
+                        ? &targetBody->shape()
+                        : nullptr;
+
+                ExtrudeBatchResult batch = ExtrudeOperation::extrudeProfiles(selectedProfiles,
+                                                                             params,
+                                                                             targetShape);
+                if (!batch.success) return;
+
+                TopoDS_Shape previewShape =
+                    (params.mode == 0 || !targetBody || !targetBody->hasShape())
+                        ? makePreviewShape(batch.solids)
+                        : (batch.finalTargetShape.has_value() ? *batch.finalTargetShape
+                                                              : TopoDS_Shape{});
+
+                if (!previewShape.IsNull()) {
+                    m_viewport->renderer().setPreviewShape(previewShape);
+                    m_viewport->update();
+                }
+                return;
+            }
+
+            res = ExtrudeOperation::extrude(*sketch, params);
         }
 
         if (!res.success) return;

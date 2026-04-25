@@ -2,6 +2,7 @@
 #include "core/Logger.h"
 #include "document/UndoStack.h"
 #include "sketch/Sketch.h"
+#include "sketch/SketchPicker.h"
 #include "sketch/SketchPlane.h"
 #include <algorithm>
 
@@ -157,6 +158,38 @@ bool Document::isSelected(const SelectedItem& it) const
 std::vector<Document::SelectedItem> Document::selectionItems() const
 {
     return m_selection;
+}
+
+std::optional<SketchFaceSelection> Document::selectedSketchFaces(quint64 sketchId) const
+{
+    SketchFaceSelection selection;
+    selection.sketchId = sketchId;
+
+    for (const auto& item : m_selection) {
+        if (item.type != SelectedItem::Type::SketchArea) continue;
+        if (item.index < 0) continue;
+
+        if (selection.sketchId == 0)
+            selection.sketchId = item.sketchId;
+
+        if (item.sketchId != selection.sketchId) {
+            LOG_WARN("Document::selectedSketchFaces: mixed sketch-area selection is unsupported "
+                     "(expected sketchId={}, saw sketchId={})",
+                     selection.sketchId, item.sketchId);
+            return std::nullopt;
+        }
+
+        if (std::find(selection.loopIndices.begin(),
+                      selection.loopIndices.end(),
+                      item.index) == selection.loopIndices.end()) {
+            selection.loopIndices.push_back(item.index);
+        }
+    }
+
+    if (selection.sketchId == 0 || selection.loopIndices.empty())
+        return std::nullopt;
+
+    return selection;
 }
 
 Body* Document::singleSelectedBody() const

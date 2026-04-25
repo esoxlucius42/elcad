@@ -1,4 +1,5 @@
 #pragma once
+#include "sketch/SketchProfiles.h"
 #include <QString>
 
 #ifdef ELCAD_HAVE_OCCT
@@ -28,6 +29,7 @@ class SketchToWire {
 public:
 #ifdef ELCAD_HAVE_OCCT
     static SketchToWireResult convert(const Sketch& sketch);
+    static SketchToWireResult buildFaceForProfile(const SelectedSketchProfile& profile);
 #endif
 };
 

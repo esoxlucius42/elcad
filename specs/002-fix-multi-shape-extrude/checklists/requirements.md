@@ -1,7 +1,7 @@
-# Specification Quality Checklist: Fix Extrude Preview Normals
+# Specification Quality Checklist: Fix Multi-Shape Extrude
 
 **Purpose**: Validate specification completeness and quality before proceeding to planning
-**Created**: 2026-04-24
+**Created**: 2026-04-25
 **Feature**: [Link to spec.md](../spec.md)
 
 ## Content Quality
@@ -33,5 +33,4 @@
 
 - Validation passed on the first iteration.
 - No clarification markers were needed; reasonable defaults were captured in the Assumptions section.
-- Verification evidence requirements align with the constitution's manual-evidence expectations for viewport-facing changes.
-- Closed at user request after the bug was fixed.
+- The specification stays within repository-documented scope for multiple independent bodies and the existing desktop modeling workflow.

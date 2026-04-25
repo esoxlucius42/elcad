@@ -62,6 +62,11 @@ Supported Copilot CLI entrypoints:
 - Mention the agent in a prompt, for example `Use the speckit.specify agent to create a spec`
 - Launch directly with `copilot --agent=speckit.plan --prompt "Create a plan for ..."`
 
+Repository policy for Copilot agents:
+
+- Do not create or switch branches autonomously.
+- Keep agent work on the `main` branch unless the user explicitly instructs otherwise.
+
 Examples of available agents include:
 
 - `speckit.specify`

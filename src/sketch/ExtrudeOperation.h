@@ -1,6 +1,9 @@
 #pragma once
+#include "sketch/SketchProfiles.h"
 #include "ui/ExtrudeDialog.h"
 #include <QString>
+#include <optional>
+#include <vector>
 
 #ifdef ELCAD_HAVE_OCCT
 #include <TopoDS_Shape.hxx>
@@ -20,6 +23,15 @@ struct ExtrudeResult {
 #endif
 };
 
+struct ExtrudeBatchResult {
+    bool    success{false};
+    QString errorMsg;
+#ifdef ELCAD_HAVE_OCCT
+    std::vector<TopoDS_Shape>         solids;
+    std::optional<TopoDS_Shape>       finalTargetShape;
+#endif
+};
+
 // Performs OCCT BRepPrimAPI_MakePrism extrusion.
 // Returns the resulting solid shape.
 class ExtrudeOperation {
@@ -29,6 +41,10 @@ public:
     // If symmetric: extrudes half+half in both directions.
     static ExtrudeResult extrude(const Sketch& sketch,
                                  const ExtrudeParams& params);
+
+    static ExtrudeBatchResult extrudeProfiles(const std::vector<SelectedSketchProfile>& profiles,
+                                              const ExtrudeParams& params,
+                                              const TopoDS_Shape* targetShape = nullptr);
 
     // Extrude an existing OCCT face directly (used when user selects a mesh face)
     static ExtrudeResult extrudeFace(const TopoDS_Face& face, const ExtrudeParams& params);
