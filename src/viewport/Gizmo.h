@@ -8,8 +8,8 @@
 
 namespace elcad {
 
-enum class GizmoMode   { Translate, Rotate, Scale };
-enum class GizmoHandle { None, X, Y, Z, XY, XZ, YZ, XYZ };
+enum class GizmoMode   { Translate, Rotate, Scale, Extrude1D };
+enum class GizmoHandle { None, X, Y, Z, XY, XZ, YZ, XYZ, Normal };
 
 // Interactive 3D transform gizmo rendered in the viewport.
 // Owned by Renderer; interacted with via ViewportWidget.
@@ -33,6 +33,9 @@ public:
 
     QVector3D  position() const  { return m_position; }
     void       setPosition(const QVector3D& p) { m_position = p; }
+
+    QVector3D  extrudeAxis() const { return m_extrudeAxis; }
+    void       setExtrudeAxis(const QVector3D& axis) { m_extrudeAxis = axis.normalized(); }
 
     // Call each mouseMoveEvent; returns true if hover state changed (requires redraw).
     bool       updateHover(const QVector3D& rayO, const QVector3D& rayD,
@@ -87,10 +90,13 @@ private:
     Handle m_rotateH[3];
     // Scale:     slots 0-2 = X/Y/Z cube arrows, slot 3 = XYZ center cube
     Handle m_scaleH[4];
+    // Extrude1D: single arrow along m_extrudeAxis (built along +Y in local space)
+    Handle m_extrude1DH;
 
     void buildTranslate();
     void buildRotate();
     void buildScale();
+    void buildExtrude1D();
 
     // ── Geometry primitives ─────────────────────────────────────────────────
     static void appendCylinder(std::vector<float>& v, std::vector<unsigned>& i,
@@ -147,11 +153,13 @@ private:
 
     GizmoMode   m_mode    {GizmoMode::Translate};
     QVector3D   m_position{0, 0, 0};
+    QVector3D   m_extrudeAxis{0, 1, 0};  // for Extrude1D mode
     bool        m_visible {false};
     GizmoHandle m_hovered {GizmoHandle::None};
 
     bool        m_dragging    {false};
     GizmoHandle m_dragHandle  {GizmoHandle::None};
+    QVector3D   m_dragAnchorPos;          // m_position snapshot at drag start (used by Extrude1D)
     QVector3D   m_dragAxis;           // world-space drag axis (for axis + rotate drag)
     QVector3D   m_dragPlaneNormal;    // drag plane normal
     QVector3D   m_dragStartHit;       // world-space hit at drag start (plane drags)

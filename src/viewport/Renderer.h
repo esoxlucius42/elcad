@@ -2,8 +2,10 @@
 #include "viewport/Camera.h"
 #include "viewport/Gizmo.h"
 #include "viewport/Grid.h"
+#include "viewport/OriginMarker.h"
 #include "viewport/MeshBuffer.h"
 #include "viewport/ShaderProgram.h"
+#include "sketch/SnapEngine.h"
 #include "sketch/SketchRenderer.h"
 #include "document/Document.h"
 #include <QOpenGLFunctions_3_3_Core>
@@ -30,12 +32,18 @@ public:
     void resize(int w, int h);
     void render(Camera& camera, Document* doc = nullptr,
                 const std::vector<SketchEntity>* sketchPreview = nullptr,
-                const QVector2D*                 snapPos       = nullptr,
+                const SnapResult*                snapResult    = nullptr,
                 float                             devicePixelRatio = 1.0f);
 
     // Invalidate cached mesh for a body (call when body shape changes)
     void invalidateMesh(quint64 bodyId);
     void clearMeshCache();
+
+#ifdef ELCAD_HAVE_OCCT
+    // Set / clear a ghosted preview shape shown while a tool is active.
+    void setPreviewShape(const TopoDS_Shape& shape);
+#endif
+    void clearPreviewShape();
 
     // Ray-pick: returns the closest visible body hit by the ray, or nullptr.
     Body* pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc);
@@ -55,6 +63,11 @@ public:
     // Expand a clicked triangle into a connected coplanar set. Returns triangle indices.
     std::vector<int> expandFaceSelection(Body* body, int startTri, float angleDeg = 10.0f, float distanceTol = 1e-3f);
 
+    // Return the unit normal of a specific triangle on the body's mesh, or {0,1,0} if unavailable.
+    QVector3D triangleNormal(Body* body, int triIndex);
+    // Return the centroid of a specific triangle on the body's mesh, or {0,0,0} if unavailable.
+    QVector3D triangleCentroid(Body* body, int triIndex);
+
 #ifdef ELCAD_HAVE_OCCT
     // Build a TopoDS_Face from a set of mesh triangle indices. Returns a null face on failure.
     TopoDS_Face buildFaceFromTriangles(Body* body, const std::vector<int>& triIndices);
@@ -66,6 +79,13 @@ public:
     // Active sketch overlay (does not take ownership)
     void setActiveSketch(Sketch* sketch) { m_activeSketch = sketch; }
 
+    // Hover state for completed sketch entities (set each frame from ViewportWidget).
+    void setSketchHover(const Document::SelectedItem& item) {
+        m_sketchHover      = item;
+        m_hasSketchHover   = true;
+    }
+    void clearSketchHover() { m_hasSketchHover = false; }
+
     // Gizmo access
     Gizmo& gizmo() { return m_gizmo; }
 
@@ -74,8 +94,13 @@ private:
                   const QVector3D& camPos, Document* doc);
     MeshBuffer* getMeshBuffer(Body* body);
 
+    // Preview rendering helpers (FR-001, FR-002: camera-facing surfaces only)
+    void setupPreviewRenderState();
+    void restoreDefaultRenderState();
+
 
     Grid           m_grid;
+    OriginMarker   m_originMarker;
     ShaderProgram  m_phong;
     ShaderProgram  m_edge;
     SketchRenderer m_sketchRenderer;
@@ -85,8 +110,22 @@ private:
     bool           m_gridVisible{true};
     int            m_width{1}, m_height{1};
 
+    // Hover state for completed sketches (updated by ViewportWidget each mouse-move)
+    Document::SelectedItem m_sketchHover;
+    bool                   m_hasSketchHover{false};
+
     // Body ID → mesh buffer cache
     std::unordered_map<quint64, std::unique_ptr<MeshBuffer>> m_meshCache;
+
+    // Preview ghost shape (shown while Extrude/Mirror tool is active).
+    // The shape is stored here and the MeshBuffer is built lazily inside render()
+    // (where an OpenGL context is guaranteed to be current).
+    std::unique_ptr<MeshBuffer> m_previewMesh;
+    bool                        m_hasPreview{false};
+    bool                        m_previewDirty{false};
+#ifdef ELCAD_HAVE_OCCT
+    TopoDS_Shape                m_previewShape;  // pending shape waiting for GL upload
+#endif
 
     // One-time GL buffers for highlights to avoid realloc each frame
     GLuint m_highlightVao{0};

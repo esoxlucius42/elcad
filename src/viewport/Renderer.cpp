@@ -27,6 +27,7 @@ void Renderer::initialize()
     glEnable(GL_LINE_SMOOTH);
 
     m_grid.initialize();
+    m_originMarker.initialize();
     m_phong.load(":/shaders/phong.vert", ":/shaders/phong.frag");
     m_edge.load(":/shaders/edge.vert",   ":/shaders/edge.frag");
     m_sketchRenderer.initialize();
@@ -54,7 +55,7 @@ void Renderer::resize(int w, int h)
 
 void Renderer::render(Camera& camera, Document* doc,
                       const std::vector<SketchEntity>* sketchPreview,
-                      const QVector2D* snapPos,
+                      const SnapResult* snapResult,
                       float devicePixelRatio)
 {
     glClearColor(0.2f, 0.2f, 0.2f, 1.0f); // #333333
@@ -65,6 +66,8 @@ void Renderer::render(Camera& camera, Document* doc,
 
     if (m_gridVisible)
         m_grid.render(view, proj, camera.nearPlane(), camera.farPlane());
+
+    m_originMarker.render(view, proj);
 
     if (!doc) return;
 
@@ -82,33 +85,119 @@ void Renderer::render(Camera& camera, Document* doc,
 
     glDisable(GL_POLYGON_OFFSET_FILL);
 
-    // ── Gizmo overlay (translate/rotate/scale handles) ────────────────────────
-    if (!m_activeSketch) {
-        Body* selected = nullptr;
-        for (auto& b : doc->bodies()) {
-            if (b->selected() && b->hasBbox()) { selected = b.get(); break; }
+    // ── Preview ghost pass ────────────────────────────────────────────────────
+#ifdef ELCAD_HAVE_OCCT
+    if (m_hasPreview) {
+        // Build the MeshBuffer here (GL context is current) if shape changed
+        if (m_previewDirty) {
+            m_previewMesh = std::make_unique<MeshBuffer>();
+            m_previewMesh->build(m_previewShape, 0.02f);
+            m_previewDirty = false;
+            LOG_DEBUG("Preview mesh built: {} triangles", m_previewMesh->triangleCount() / 3);
         }
-        m_gizmo.setVisible(selected != nullptr);
-        if (selected && !m_gizmo.isDragging()) {
-            m_gizmo.setPosition((selected->bboxMin() + selected->bboxMax()) * 0.5f);
-            LOG_INFO("Renderer: selected id={} bbox_center=({:.3f},{:.3f},{:.3f}) viewH={} fov={}",
-                     selected->id(),
-                     ((selected->bboxMin()+selected->bboxMax())*0.5f).x(),
-                     ((selected->bboxMin()+selected->bboxMax())*0.5f).y(),
-                     ((selected->bboxMin()+selected->bboxMax())*0.5f).z(),
-                     m_height, camera.fov());
+
+        if (m_previewMesh && !m_previewMesh->isEmpty() && m_phong.isValid()) {
+            // FR-001, FR-002: Enable camera-facing preview rendering
+            setupPreviewRenderState();
+
+            QMatrix4x4 model;
+            QMatrix3x3 normalMat = model.normalMatrix();
+            m_phong.bind();
+            m_phong.setMat4("uModel",        model);
+            m_phong.setMat4("uView",         view);
+            m_phong.setMat4("uProjection",   proj);
+            m_phong.setMat3("uNormalMatrix", normalMat);
+            m_phong.setVec3("uLightDir",     m_lightDir.normalized());
+            m_phong.setVec3("uLightColor",   m_lightColor);
+            m_phong.setVec3("uObjectColor",  QVector3D(0.25f, 0.85f, 0.95f));  // cyan ghost
+            m_phong.setVec3("uViewPos",      camPos);
+            m_phong.setVec3("uSkyColor",     m_skyColor);
+            m_phong.setVec3("uGroundColor",  m_groundColor);
+            m_phong.setVec3("uFillDir",      m_fillDir.normalized());
+            m_phong.setVec3("uFillColor",    m_fillColor);
+            m_phong.setFloat("uAlpha",       0.45f);
+            m_previewMesh->drawTriangles();
+            m_phong.release();
+
+            restoreDefaultRenderState();
+        }
+    }
+#endif
+
+    // ── Gizmo overlay (translate/rotate/scale handles) ────────────────────────
+    // Extrude1D gizmo is managed by ViewportWidget — skip auto-management for it.
+    if (!m_activeSketch) {
+        if (m_gizmo.mode() != GizmoMode::Extrude1D) {
+            Body* selected = nullptr;
+            for (auto& b : doc->bodies()) {
+                if (b->selected() && b->hasBbox()) { selected = b.get(); break; }
+            }
+            m_gizmo.setVisible(selected != nullptr);
+            if (selected && !m_gizmo.isDragging()) {
+                m_gizmo.setPosition((selected->bboxMin() + selected->bboxMax()) * 0.5f);
+            }
         }
         if (m_gizmo.visible())
             m_gizmo.draw(view, proj, camPos, m_width, m_height, camera.fov());
     } else {
-        m_gizmo.setVisible(false);
+        // In sketch mode, hide the body gizmo but leave Extrude1D alone
+        if (m_gizmo.mode() != GizmoMode::Extrude1D)
+            m_gizmo.setVisible(false);
+        if (m_gizmo.mode() == GizmoMode::Extrude1D && m_gizmo.visible())
+            m_gizmo.draw(view, proj, camPos, m_width, m_height, camera.fov());
     }
 
     // ── Sketch overlay ────────────────────────────────────────────────────────
     if (m_activeSketch) {
         static const std::vector<SketchEntity> empty;
         const std::vector<SketchEntity>& preview = sketchPreview ? *sketchPreview : empty;
-        m_sketchRenderer.render(*m_activeSketch, view, proj, preview, snapPos);
+        m_sketchRenderer.render(*m_activeSketch, view, proj, preview, snapResult);
+    }
+
+    // ── Completed sketch overlays (shown when not actively editing) ───────────
+    if (!m_activeSketch && doc && !m_hasPreview) {
+        const auto& selection = doc->selectionItems();
+
+        for (const auto& sketchPtr : doc->sketches()) {
+            if (!sketchPtr->visible()) continue;
+            quint64 hoveredEntityId        = 0;
+            int     hoveredAreaIndex       = -1;
+            quint64 hoveredCircleEntityId  = 0;
+
+            if (m_hasSketchHover && m_sketchHover.sketchId == sketchPtr->id()) {
+                using T = Document::SelectedItem::Type;
+                if (m_sketchHover.type == T::SketchLine ||
+                    m_sketchHover.type == T::SketchPoint)
+                    hoveredEntityId = m_sketchHover.entityId;
+                else if (m_sketchHover.type == T::SketchArea) {
+                    if (m_sketchHover.index == -1)
+                        hoveredCircleEntityId = m_sketchHover.entityId;
+                    else
+                        hoveredAreaIndex = m_sketchHover.index;
+                }
+            }
+
+            std::vector<quint64> selectedEntityIds;
+            std::vector<int>     selectedAreaIndices;
+            std::vector<quint64> selectedCircleEntityIds;
+            using T = Document::SelectedItem::Type;
+            for (const auto& sel : selection) {
+                if (sel.sketchId != sketchPtr->id()) continue;
+                if (sel.type == T::SketchLine || sel.type == T::SketchPoint)
+                    selectedEntityIds.push_back(sel.entityId);
+                else if (sel.type == T::SketchArea) {
+                    if (sel.index == -1)
+                        selectedCircleEntityIds.push_back(sel.entityId);
+                    else
+                        selectedAreaIndices.push_back(sel.index);
+                }
+            }
+
+            m_sketchRenderer.renderInactive(*sketchPtr, view, proj,
+                                             hoveredEntityId, selectedEntityIds,
+                                             hoveredAreaIndex, hoveredCircleEntityId,
+                                             selectedAreaIndices, selectedCircleEntityIds);
+        }
     }
 }
 
@@ -151,6 +240,7 @@ void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& pr
         m_phong.setVec3("uGroundColor", m_groundColor);
         m_phong.setVec3("uFillDir",     m_fillDir.normalized());
         m_phong.setVec3("uFillColor",   m_fillColor);
+        m_phong.setFloat("uAlpha",      1.0f);
 
         mesh->drawTriangles();
         m_phong.release();
@@ -392,6 +482,29 @@ void Renderer::clearMeshCache()
     m_meshCache.clear();
 }
 
+#ifdef ELCAD_HAVE_OCCT
+void Renderer::setPreviewShape(const TopoDS_Shape& shape)
+{
+    // Only store the shape here — the MeshBuffer (GPU upload) is built lazily
+    // inside render() where an OpenGL context is guaranteed to be current.
+    m_previewShape = shape;
+    m_previewDirty = true;
+    m_hasPreview   = true;
+    m_previewMesh.reset();
+    LOG_DEBUG("Preview shape queued for next render");
+}
+#endif
+
+void Renderer::clearPreviewShape()
+{
+    m_previewMesh.reset();
+    m_hasPreview   = false;
+    m_previewDirty = false;
+#ifdef ELCAD_HAVE_OCCT
+    m_previewShape = TopoDS_Shape{};
+#endif
+}
+
 Body* Renderer::pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Document* doc)
 {
 #ifndef ELCAD_HAVE_OCCT
@@ -430,23 +543,13 @@ Body* Renderer::pickBody(const QVector3D& rayOrigin, const QVector3D& rayDir, Do
         MeshBuffer* mesh = getMeshBuffer(body);
         if (!mesh || mesh->isEmpty()) continue;
 
-        float t;
-        bool hit = false;
-        int triCount = mesh->triangleCount() / 3;
-        if (triCount > kSelectionTriangleLimit && body->hasBbox()) {
-            // Fast bbox test
-            float tAabb;
-            if (rayAabb(rayOrigin, rayDir, body->bboxMin(), body->bboxMax(), tAabb)) {
-                t = tAabb;
-                hit = true;
+        float t; int triIdx; float u,v;
+        // Always perform per-triangle intersection to get accurate closest hit
+        if (mesh->rayIntersectDetailed(rayOrigin, rayDir, t, triIdx, u, v)) {
+            if (t < minT) {
+                minT = t;
+                closest = body;
             }
-        } else {
-            if (mesh->rayIntersect(rayOrigin, rayDir, t)) hit = true;
-        }
-
-        if (hit && t < minT) {
-            minT    = t;
-            closest = body;
         }
     }
 
@@ -468,6 +571,10 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
 #else
     outHit = {};
     if (!doc) return false;
+
+    // Diagnostic: log incoming ray
+    LOG_DEBUG("pickHit: rayOrigin=({:.3f},{:.3f},{:.3f}) rayDir=({:.6f},{:.6f},{:.6f})",
+              rayOrigin.x(), rayOrigin.y(), rayOrigin.z(), rayDir.x(), rayDir.y(), rayDir.z());
 
     Body* closest = nullptr;
     float minT    = std::numeric_limits<float>::max();
@@ -551,24 +658,9 @@ bool Renderer::pickHit(const QVector3D& rayOrigin, const QVector3D& rayDir, Docu
     item.type = Document::SelectedItem::Type::Body;
 
     if (bestTri >= 0) {
-        float alpha = 1.0f - bestU - bestV;
-        const float vertexEps = 1e-3f;
-        const float edgeEps = 0.02f;
-
-        if (alpha > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 0; }
-        else if (bestU > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 1; }
-        else if (bestV > 1.0f - vertexEps) { item.type = Document::SelectedItem::Type::Vertex; item.index = bestTri * 3 + 2; }
-        else if (alpha < edgeEps || bestU < edgeEps || bestV < edgeEps) {
-            item.type = Document::SelectedItem::Type::Edge;
-            int edgeLocal = 0;
-            if (alpha < edgeEps) edgeLocal = 0;
-            else if (bestU < edgeEps) edgeLocal = 1;
-            else edgeLocal = 2;
-            item.index = bestTri * 3 + edgeLocal;
-        } else {
-            item.type = Document::SelectedItem::Type::Face;
-            item.index = bestTri;
-        }
+        // Disable selecting vertices or edges directly — always select the face.
+        item.type = Document::SelectedItem::Type::Face;
+        item.index = bestTri;
     } else {
         // bestTri < 0 means we only detected a bbox-level hit for a large mesh; leave as Body
     }
@@ -706,6 +798,28 @@ int Renderer::faceOrdinalForTriangle(Body* body, int triIndex)
 #endif
 }
 
+QVector3D Renderer::triangleNormal(Body* body, int triIndex)
+{
+    if (!body) return {0, 1, 0};
+    MeshBuffer* mesh = getMeshBuffer(body);
+    if (!mesh || mesh->isEmpty()) return {0, 1, 0};
+    if (triIndex < 0 || triIndex >= mesh->triangleCount()) return {0, 1, 0};
+    return mesh->triangleNormal(triIndex);
+}
+
+QVector3D Renderer::triangleCentroid(Body* body, int triIndex)
+{
+    if (!body) return {0, 0, 0};
+    MeshBuffer* mesh = getMeshBuffer(body);
+    if (!mesh || mesh->isEmpty()) return {0, 0, 0};
+    const auto& verts   = mesh->pickVertices();
+    const auto& indices = mesh->pickIndices();
+    int base = triIndex * 3;
+    if (base + 2 >= static_cast<int>(indices.size())) return {0, 0, 0};
+    unsigned i0 = indices[base], i1 = indices[base + 1], i2 = indices[base + 2];
+    if (i0 >= verts.size() || i1 >= verts.size() || i2 >= verts.size()) return {0, 0, 0};
+    return (verts[i0] + verts[i1] + verts[i2]) / 3.0f;
+}
 
 std::vector<int> Renderer::expandFaceSelection(Body* body, int startTri, float angleDeg, float distanceTol)
 {
@@ -871,5 +985,24 @@ TopoDS_Face Renderer::buildFaceFromTriangles(Body* body, const std::vector<int>&
 }
 #endif
 
-} // namespace elcad
+// ── Preview render state helpers ─────────────────────────────────────────────
+// FR-001, FR-002: Preview must show camera-facing surfaces only.
+// Setup translucent ghost rendering with back-face culling enabled.
+void Renderer::setupPreviewRenderState()
+{
+    glDepthMask(GL_FALSE);       // No depth writes (ghost effect)
+    glEnable(GL_CULL_FACE);      // Enable back-face culling (FIX: was disabled)
+    glCullFace(GL_BACK);         // Cull back faces
+    glFrontFace(GL_CCW);         // Counter-clockwise winding is front-facing
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+}
 
+// Restore default render state after preview pass
+void Renderer::restoreDefaultRenderState()
+{
+    glDepthMask(GL_TRUE);        // Re-enable depth writes
+    glEnable(GL_CULL_FACE);      // Keep culling enabled (default state)
+}
+
+} // namespace elcad

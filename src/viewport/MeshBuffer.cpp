@@ -84,6 +84,8 @@ void MeshBuffer::build(const TopoDS_Shape& shape, float deflection)
 
         // Build per-node normals by averaging face normals at each node
         // OCCT may or may not have pre-computed normals — compute them from triangles
+        // NOTE: Triangle winding is corrected for reversed faces (line 92, 129) to ensure
+        //       consistent CCW winding for face culling in preview rendering (FR-001, FR-002)
         std::vector<gp_Vec> nodeNormals(tri->NbNodes(), gp_Vec(0,0,0));
 
         for (int t = 1; t <= tri->NbTriangles(); ++t) {
@@ -202,16 +204,20 @@ void MeshBuffer::build(const TopoDS_Shape& shape, float deflection)
     m_bvhNodes.clear();
     if (!m_triOrder.empty()) {
         std::vector<int> indexList = m_triOrder; // triangle indices
-        std::vector<QVector3D> centroids = m_triCentroids; // centroid per triangle index
 
         std::function<int(int,int)> buildIndexNode = [&](int start, int count) -> int {
             BVHNode node;
             QVector3D nbmin( std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max());
             QVector3D nbmax(-std::numeric_limits<float>::max(),-std::numeric_limits<float>::max(),-std::numeric_limits<float>::max());
+            // Use actual triangle vertex extents so the AABB test never rejects a valid hit
+            // (centroid-based bounds were too tight: clicks near face edges/corners were missed)
             for (int i = 0; i < count; ++i) {
-                const QVector3D& c = centroids[start + i];
-                nbmin.setX(std::min(nbmin.x(), c.x())); nbmin.setY(std::min(nbmin.y(), c.y())); nbmin.setZ(std::min(nbmin.z(), c.z()));
-                nbmax.setX(std::max(nbmax.x(), c.x())); nbmax.setY(std::max(nbmax.y(), c.y())); nbmax.setZ(std::max(nbmax.z(), c.z()));
+                int tri = indexList[start + i];
+                for (int vi = 0; vi < 3; ++vi) {
+                    const QVector3D& v = m_pickVerts[m_pickIndices[static_cast<size_t>(tri) * 3 + vi]];
+                    nbmin.setX(std::min(nbmin.x(), v.x())); nbmin.setY(std::min(nbmin.y(), v.y())); nbmin.setZ(std::min(nbmin.z(), v.z()));
+                    nbmax.setX(std::max(nbmax.x(), v.x())); nbmax.setY(std::max(nbmax.y(), v.y())); nbmax.setZ(std::max(nbmax.z(), v.z()));
+                }
             }
             node.bmin = nbmin; node.bmax = nbmax;
             node.start = start; node.count = count; node.left = node.right = -1;
@@ -226,13 +232,10 @@ void MeshBuffer::build(const TopoDS_Shape& shape, float deflection)
             else if (extent.z() > extent.x() && extent.z() > extent.y()) axis = 2;
 
             int mid = start + count/2;
+            // Use m_triCentroids (indexed by triangle index, never modified) so the
+            // comparator is correct in recursive calls too
             std::nth_element(indexList.begin() + start, indexList.begin() + mid, indexList.begin() + start + count,
-                             [&](int ia, int ib){ return centroids[ia][axis] < centroids[ib][axis]; });
-
-            // Reorder centroids slice to match indexList ordering for children
-            std::vector<QVector3D> tmpC(count);
-            for (int i = 0; i < count; ++i) tmpC[i] = centroids[indexList[start + i]];
-            for (int i = 0; i < count; ++i) centroids[start + i] = tmpC[i];
+                             [&](int ia, int ib){ return m_triCentroids[ia][axis] < m_triCentroids[ib][axis]; });
 
             int leftIdx = buildIndexNode(start, mid - start);
             int rightIdx = buildIndexNode(mid, start + count - mid);

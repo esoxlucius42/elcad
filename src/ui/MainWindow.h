@@ -1,7 +1,10 @@
 #pragma once
 #include <QMainWindow>
+#include <QTimer>
 #include "document/Document.h"
 #include "tools/SketchTool.h"
+#include "ui/ExtrudeDialog.h"
+#include <functional>
 #include <memory>
 
 QT_BEGIN_NAMESPACE
@@ -15,6 +18,7 @@ class BodyListPanel;
 class PropertiesPanel;
 class NavCubeWidget;
 class RibbonWidget;
+class ToolOptionsPanel;
 class Document;
 class SketchTool;
 
@@ -28,7 +32,6 @@ private:
     void setupRibbon();
     void setupDocks();
     void setupStatusBar();
-    void createTestScene();
 
     void onImportStep();
     void onExportStep();
@@ -47,14 +50,36 @@ private:
 
     std::unique_ptr<Document> m_document;
 
-    ViewportWidget*  m_viewport{nullptr};
-    BodyListPanel*   m_bodyListPanel{nullptr};
-    PropertiesPanel* m_propertiesPanel{nullptr};
-    NavCubeWidget*   m_navCube{nullptr};
-    RibbonWidget*    m_ribbon{nullptr};
-    QLabel*          m_statusCoords{nullptr};
-    QLabel*          m_statusMode{nullptr};
-    QLabel*          m_statusSnap{nullptr};
+    ViewportWidget*   m_viewport{nullptr};
+    BodyListPanel*    m_bodyListPanel{nullptr};
+    PropertiesPanel*  m_propertiesPanel{nullptr};
+    NavCubeWidget*    m_navCube{nullptr};
+    RibbonWidget*     m_ribbon{nullptr};
+    ToolOptionsPanel* m_toolOptionsPanel{nullptr};
+    QLabel*           m_statusCoords{nullptr};
+    QLabel*           m_statusMode{nullptr};
+    QLabel*           m_statusSnap{nullptr};
+
+    // Pending operation closures — set when a tool is activated in the panel
+    std::function<void(ExtrudeParams)>     m_pendingExtrudeFn;
+    std::function<void(int)>               m_pendingMirrorFn;
+    std::function<void(quint64, quint64)>  m_pendingBooleanFn;
+
+    // Preview shape computation closures (set alongside pending fns; call renderer directly)
+    std::function<void(ExtrudeParams)>     m_pendingExtrudePreviewFn;
+    std::function<void(int)>               m_pendingMirrorPreviewFn;
+
+    // Preview helpers — compute OCCT shape without committing to the document
+    void recomputeExtrudePreview(ExtrudeParams params);
+    void recomputeMirrorPreview(int plane);
+    // Rate-limited preview scheduler for extrude (starts timer only if not already active)
+    void scheduleExtrudePreview(ExtrudeParams params);
+
+    // Stores the most recent extrude params so the rate-limit timer can read them on fire
+    ExtrudeParams m_latestExtrudeParams;
+
+    // Timer shared by extrude and mirror previews (single-shot, OCCT is slow)
+    QTimer* m_previewTimer{nullptr};
 
     // Undo/Redo actions (kept to update text and enabled state)
     QAction* m_actUndo{nullptr};

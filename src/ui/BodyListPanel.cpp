@@ -1,6 +1,7 @@
 #include "ui/BodyListPanel.h"
 #include "document/Document.h"
 #include "document/Body.h"
+#include "sketch/Sketch.h"
 #include <QVBoxLayout>
 #include <QTreeWidget>
 #include <QHeaderView>
@@ -30,10 +31,21 @@ BodyListPanel::BodyListPanel(QWidget* parent)
     m_selectedList->setFixedHeight(120);
     layout->addWidget(m_selectedList);
 
+    // Sketch list section
+    m_sketchLabel = new QLabel("Sketches", this);
+    m_sketchLabel->setStyleSheet("font-weight: bold; padding-top: 6px;");
+    layout->addWidget(m_sketchLabel);
+
+    m_sketchList = new QListWidget(this);
+    m_sketchList->setSelectionMode(QAbstractItemView::SingleSelection);
+    layout->addWidget(m_sketchList);
+
     connect(m_tree, &QTreeWidget::itemChanged,
             this,   &BodyListPanel::onItemChanged);
     connect(m_tree, &QTreeWidget::itemSelectionChanged,
             this,   &BodyListPanel::onSelectionChanged);
+    connect(m_sketchList, &QListWidget::itemChanged,
+            this,         &BodyListPanel::onSketchItemChanged);
     // No action on selected-list clicks for now
 }
 
@@ -44,6 +56,7 @@ void BodyListPanel::setDocument(Document* doc)
     }
     m_doc = doc;
     m_tree->clear();
+    m_sketchList->clear();
 
     if (!m_doc) return;
 
@@ -51,9 +64,17 @@ void BodyListPanel::setDocument(Document* doc)
     for (auto& b : m_doc->bodies())
         onBodyAdded(b.get());
 
+    // Populate with existing sketches
+    for (auto& s : m_doc->sketches())
+        onSketchAdded(s.get());
+
     connect(m_doc, &Document::bodyAdded,   this, &BodyListPanel::onBodyAdded);
     connect(m_doc, &Document::bodyRemoved, this, &BodyListPanel::onBodyRemoved);
     connect(m_doc, &Document::selectionChanged, this, &BodyListPanel::onDocumentSelectionChanged);
+    connect(m_doc, &Document::sketchAdded,             this, &BodyListPanel::onSketchAdded);
+    connect(m_doc, &Document::sketchRemoved,           this, &BodyListPanel::onSketchRemoved);
+    connect(m_doc, &Document::sketchVisibilityChanged, this, &BodyListPanel::onSketchVisibilityChanged);
+    connect(m_doc, &Document::activeSketchChanged,     this, &BodyListPanel::onActiveSketchChanged);
 }
 
 void BodyListPanel::onBodyAdded(Body* body)
@@ -161,4 +182,65 @@ void BodyListPanel::onDocumentSelectionChanged()
     m_updating = false;
 }
 
+// ── Sketch list slots ──────────────────────────────────────────────────────────
+
+void BodyListPanel::onSketchAdded(Sketch* sketch)
+{
+    if (!sketch) return;
+    m_updating = true;
+    auto* item = new QListWidgetItem(sketch->name(), m_sketchList);
+    item->setData(Qt::UserRole, static_cast<quint64>(sketch->id()));
+    item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+    item->setCheckState(sketch->visible() ? Qt::Checked : Qt::Unchecked);
+    m_sketchList->addItem(item);
+    m_updating = false;
+}
+
+void BodyListPanel::onSketchRemoved(quint64 id)
+{
+    if (auto* item = itemForSketch(id))
+        delete item;
+}
+
+void BodyListPanel::onSketchVisibilityChanged(Sketch* sketch)
+{
+    if (!sketch) return;
+    m_updating = true;
+    if (auto* item = itemForSketch(sketch->id()))
+        item->setCheckState(sketch->visible() ? Qt::Checked : Qt::Unchecked);
+    m_updating = false;
+}
+
+void BodyListPanel::onActiveSketchChanged(Sketch* sketch)
+{
+    // When a sketch is reactivated (being edited), italicise its item so the user
+    // can see which one is active. When editing ends (sketch == nullptr), restore all.
+    m_updating = true;
+    for (int i = 0; i < m_sketchList->count(); ++i) {
+        auto* item = m_sketchList->item(i);
+        QFont f = item->font();
+        f.setItalic(sketch && item->data(Qt::UserRole).toULongLong() == sketch->id());
+        item->setFont(f);
+    }
+    m_updating = false;
+}
+
+void BodyListPanel::onSketchItemChanged(QListWidgetItem* item)
+{
+    if (m_updating || !m_doc) return;
+    quint64 id = item->data(Qt::UserRole).toULongLong();
+    m_doc->setSketchVisible(id, item->checkState() == Qt::Checked);
+}
+
+QListWidgetItem* BodyListPanel::itemForSketch(quint64 id) const
+{
+    for (int i = 0; i < m_sketchList->count(); ++i) {
+        auto* item = m_sketchList->item(i);
+        if (item->data(Qt::UserRole).toULongLong() == id)
+            return item;
+    }
+    return nullptr;
+}
+
 } // namespace elcad
+

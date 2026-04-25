@@ -31,13 +31,16 @@ public:
 
     // Selection helpers
     struct SelectedItem {
-        enum class Type { Body, Face, Edge, Vertex };
+        enum class Type { Body, Face, Edge, Vertex, SketchPoint, SketchLine, SketchArea };
         Type    type{Type::Body};
-        quint64 bodyId{0};   // owning body
-        int     index{-1};   // face/edge/vertex index within body (or -1 for body)
+        quint64 bodyId{0};    // owning body (for Body/Face/Edge/Vertex types)
+        quint64 sketchId{0};  // owning sketch (for Sketch* types)
+        int     index{-1};    // face/edge/vertex index within body; area loop index for SketchArea
+        quint64 entityId{0};  // sketch entity id (for SketchPoint and SketchLine)
 
         bool operator==(SelectedItem const& o) const noexcept {
-            return type == o.type && bodyId == o.bodyId && index == o.index;
+            return type == o.type && bodyId == o.bodyId && sketchId == o.sketchId
+                && index == o.index && entityId == o.entityId;
         }
     };
 
@@ -57,8 +60,14 @@ public:
     Sketch* beginSketch(const SketchPlane& plane);
     Sketch* activeSketch() const { return m_activeSketch.get(); }
     void    endSketch();
+    // Re-open a previously completed sketch for editing.
+    void    reactivateSketch(Sketch* sketch);
+
+    Sketch* sketchById(quint64 id) const;
 
     const std::vector<std::unique_ptr<Sketch>>& sketches() const { return m_sketches; }
+
+    void setSketchVisible(quint64 id, bool visible);
 
 signals:
     void bodyAdded(Body* body);
@@ -66,12 +75,16 @@ signals:
     void bodyChanged(Body* body);   // geometry/mesh changed
     void selectionChanged();
     void activeSketchChanged(Sketch* sketch);  // nullptr when sketch ended
+    void sketchAdded(Sketch* sketch);
+    void sketchRemoved(quint64 id);
+    void sketchVisibilityChanged(Sketch* sketch);
 
 private:
     std::vector<std::unique_ptr<Body>>   m_bodies;
     std::unique_ptr<UndoStack>           m_undoStack;
     std::unique_ptr<Sketch>              m_activeSketch;
     std::vector<std::unique_ptr<Sketch>> m_sketches;
+    int                                  m_nextSketchNumber{1};
 
     // Current selection (mixed types allowed)
     std::vector<SelectedItem>            m_selection;

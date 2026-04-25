@@ -2,6 +2,7 @@
 #include "ui/ViewportWidget.h"
 #include "ui/BodyListPanel.h"
 #include "ui/PropertiesPanel.h"
+#include "ui/ToolOptionsPanel.h"
 #include "ui/ExtrudeDialog.h"
 #include "ui/MirrorDialog.h"
 #include "ui/BooleanDialog.h"
@@ -96,6 +97,8 @@ MainWindow::MainWindow(QWidget* parent)
             m_viewport, [this](quint64) { m_viewport->update(); });
     connect(m_document.get(), &Document::selectionChanged,
             m_viewport, [this]() { m_viewport->update(); });
+    connect(m_document.get(), &Document::sketchVisibilityChanged,
+            m_viewport, [this](Sketch*) { m_viewport->update(); });
 
     connect(m_document.get(), &Document::activeSketchChanged,
             this, [this](Sketch* sketch) {
@@ -111,7 +114,20 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_viewport, &ViewportWidget::requestExitSketch,
             this, &MainWindow::exitSketch);
 
-    createTestScene();
+    connect(m_viewport, &ViewportWidget::requestSketchTool,
+            this, &MainWindow::activateSketchTool);
+
+    connect(m_viewport, &ViewportWidget::requestReactivateSketch,
+            this, [this](Sketch* sketch) {
+        if (!sketch) return;
+        if (m_viewport->inSketchMode()) exitSketch();
+        LOG_INFO("MainWindow: reactivating sketch id={} via double-click", sketch->id());
+        m_document->reactivateSketch(sketch);  // emits activeSketchChanged(sketch)
+        if (m_ribbon) m_ribbon->setSketchMode(true);
+        m_statusSnap->setText(QString("Plane: %1").arg(sketch->plane().name()));
+        activateSketchTool(0);  // start in selection mode
+    });
+
     LOG_INFO("MainWindow: ready");
 }
 
@@ -264,14 +280,15 @@ void MainWindow::setupRibbon()
             this, &MainWindow::onBooleanSubtract);
 
     // ── Sketch drawing tools ──────────────────────────────────────────────────
+    // Each button toggles: clicking an already-active tool deactivates it (→ selection mode)
     connect(m_ribbon->btnLine,   &QToolButton::clicked,
-            this, [this]{ activateSketchTool(1); });
+            this, [this]{ activateSketchTool(m_ribbon->btnLine->isChecked()   ? 1 : 0); });
     connect(m_ribbon->btnRect,   &QToolButton::clicked,
-            this, [this]{ activateSketchTool(2); });
+            this, [this]{ activateSketchTool(m_ribbon->btnRect->isChecked()   ? 2 : 0); });
     connect(m_ribbon->btnCircle, &QToolButton::clicked,
-            this, [this]{ activateSketchTool(3); });
+            this, [this]{ activateSketchTool(m_ribbon->btnCircle->isChecked() ? 3 : 0); });
     connect(m_ribbon->btnConstr, &QToolButton::clicked,
-            this, [this]{ activateSketchTool(4); });
+            this, [this]{ activateSketchTool(m_ribbon->btnConstr->isChecked() ? 4 : 0); });
     connect(m_ribbon->btnExitSketch, &QToolButton::clicked,
             this, &MainWindow::exitSketch);
 }
@@ -281,7 +298,7 @@ void MainWindow::setupRibbon()
 void MainWindow::setupDocks()
 {
     // Left dock — body list
-    auto* leftDock = new QDockWidget("Bodies", this);
+    auto* leftDock = new QDockWidget("Scene", this);
     leftDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     leftDock->setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetFloatable);
 
@@ -314,6 +331,21 @@ void MainWindow::setupDocks()
     sep->setFrameShape(QFrame::HLine);
     sep->setFrameShadow(QFrame::Sunken);
     rightLayout->addWidget(sep);
+
+    // Tool Options panel
+    auto* toolOptLabel = new QLabel("Tool Options", rightContainer);
+    toolOptLabel->setStyleSheet("font-weight: bold; padding: 4px 6px;");
+    rightLayout->addWidget(toolOptLabel);
+
+    m_toolOptionsPanel = new ToolOptionsPanel(rightContainer);
+    m_toolOptionsPanel->setDocument(m_document.get());
+    rightLayout->addWidget(m_toolOptionsPanel);
+
+    // Thin separator
+    auto* sep2 = new QFrame(rightContainer);
+    sep2->setFrameShape(QFrame::HLine);
+    sep2->setFrameShadow(QFrame::Sunken);
+    rightLayout->addWidget(sep2);
 
     // Properties panel label + widget
     auto* propLabel = new QLabel("Properties", rightContainer);
@@ -349,34 +381,51 @@ void MainWindow::setupDocks()
     // Seed NavCube with the initial camera orientation
     Camera& cam = m_viewport->camera();
     m_navCube->setOrientation(cam.yaw(), cam.pitch(), cam.isPerspective());
-}
 
-// ── Test scene ────────────────────────────────────────────────────────────────
+    // ── Wire ToolOptionsPanel ───────────────────────────────────────────────
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::extrudeRequested,
+            this, [this](ExtrudeParams params) {
+        if (m_previewTimer) m_previewTimer->stop();
+        m_viewport->renderer().clearPreviewShape();
+        m_viewport->exitExtrudeGizmoMode();
+        if (m_pendingExtrudeFn) m_pendingExtrudeFn(params);
+        m_pendingExtrudeFn = {};
+        m_pendingExtrudePreviewFn = {};
+    });
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::mirrorRequested,
+            this, [this](int plane) {
+        if (m_previewTimer) m_previewTimer->stop();
+        m_viewport->renderer().clearPreviewShape();
+        if (m_pendingMirrorFn) m_pendingMirrorFn(plane);
+        m_pendingMirrorFn = {};
+        m_pendingMirrorPreviewFn = {};
+    });
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::booleanUnionRequested,
+            this, [this](quint64 targetId, quint64 toolId) {
+        if (m_pendingBooleanFn) m_pendingBooleanFn(targetId, toolId);
+        m_pendingBooleanFn = {};
+    });
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::booleanSubtractRequested,
+            this, [this](quint64 targetId, quint64 toolId) {
+        if (m_pendingBooleanFn) m_pendingBooleanFn(targetId, toolId);
+        m_pendingBooleanFn = {};
+    });
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::cancelled,
+            this, [this] {
+        if (m_previewTimer) m_previewTimer->stop();
+        m_viewport->renderer().clearPreviewShape();
+        m_viewport->exitExtrudeGizmoMode();
+        m_viewport->update();
+        m_pendingExtrudeFn = {};
+        m_pendingMirrorFn  = {};
+        m_pendingBooleanFn = {};
+        m_pendingExtrudePreviewFn = {};
+        m_pendingMirrorPreviewFn  = {};
+    });
 
-void MainWindow::createTestScene()
-{
-#ifdef ELCAD_HAVE_OCCT
-    // Box 100×60×40 mm
-    {
-        Body* b = m_document->addBody("Box 100×60×40");
-        b->setShape(BRepPrimAPI_MakeBox(100.0, 60.0, 40.0).Shape());
-        b->setColor(QColor(100, 160, 220));
-    }
-    // Cylinder r=25, h=80 mm, offset
-    {
-        Body* b = m_document->addBody("Cylinder r25 h80");
-        gp_Ax2 ax(gp_Pnt(150, 0, 0), gp_Dir(0, 0, 1));
-        b->setShape(BRepPrimAPI_MakeCylinder(ax, 25.0, 80.0).Shape());
-        b->setColor(QColor(220, 140, 80));
-    }
-    // Sphere r=30 mm
-    {
-        Body* b = m_document->addBody("Sphere r30");
-        gp_Ax2 ax(gp_Pnt(-80, 0, 30), gp_Dir(0, 0, 1));
-        b->setShape(BRepPrimAPI_MakeSphere(ax, 30.0).Shape());
-        b->setColor(QColor(120, 200, 120));
-    }
-#endif
+    // Debounce timer for live preview recomputation
+    m_previewTimer = new QTimer(this);
+    m_previewTimer->setSingleShot(true);
 }
 
 // ── Status Bar ────────────────────────────────────────────────────────────────
@@ -414,7 +463,7 @@ void MainWindow::enterSketch(int planeId)
     if (m_ribbon) m_ribbon->setSketchMode(true);
 
     m_statusSnap->setText(QString("Plane: %1").arg(plane.name()));
-    activateSketchTool(1);  // activate Line tool by default
+    activateSketchTool(0);  // start in selection mode — user picks a tool explicitly
 }
 
 void MainWindow::exitSketch()
@@ -443,7 +492,7 @@ void MainWindow::activateSketchTool(int toolId)
     case 2: m_currentTool = std::make_unique<RectTool>(sketch);          break;
     case 3: m_currentTool = std::make_unique<CircleTool>(sketch);        break;
     case 4: m_currentTool = std::make_unique<LineTool>(sketch, true);    break;  // construction
-    default: break;
+    default: break;  // toolId 0 = selection mode, no drawing tool
     }
 
     m_viewport->setActiveTool(m_currentTool.get());
@@ -451,6 +500,8 @@ void MainWindow::activateSketchTool(int toolId)
 
     if (m_currentTool)
         m_statusMode->setText("Sketch | " + m_currentTool->statusHint());
+    else
+        m_statusMode->setText("Sketch | Select");
 }
 
 void MainWindow::updateSketchToolButtons(int activeId)
@@ -493,154 +544,267 @@ void MainWindow::onExtrude()
             faceBody = m_document->bodyById(commonBody);
             faceTriIndex = representativeTri;
         } else {
-            // Try last completed sketch as before
-            if (m_document->sketches().empty()) {
-                LOG_WARN("Extrude: no sketch available and no face selected — user notified");
-                QMessageBox::warning(this, "Extrude", "No sketch available and no face selected.\nCreate a sketch or select a face first.");
+            // Check if any sketch geometry (area, line, point) is selected — resolve its owning sketch
+            using T = Document::SelectedItem::Type;
+            for (const auto& s : sel) {
+                if (s.type == T::SketchArea || s.type == T::SketchLine || s.type == T::SketchPoint) {
+                    sketch = m_document->sketchById(s.sketchId);
+                    if (sketch) break;
+                }
+            }
+            if (!sketch) {
+                LOG_WARN("Extrude: no sketch active, no face selected, no sketch geometry selected — user notified");
+                QMessageBox::warning(this, "Extrude",
+                    "No geometry selected.\nActivate a sketch, select a sketch area, or select a face to extrude.");
                 return;
             }
-            sketch = m_document->sketches().back().get();
         }
     }
 
-    ExtrudeDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted) {
-        LOG_DEBUG("Extrude: dialog cancelled");
-        return;
-    }
+    // Store the resolved state in a closure for deferred execution via the panel
+    m_pendingExtrudeFn = [this, faceExtrude, faceBody, faceTriIndex, sketch](ExtrudeParams params) {
+        LOG_INFO("Extrude: distance={:.4f} mode={} symmetric={}",
+                 params.distance, params.mode, params.symmetric);
 
-    ExtrudeParams params = dlg.params();
-    LOG_INFO("Extrude: distance={:.4f} mode={} symmetric={}",
-             params.distance, params.mode, params.symmetric);
+        ExtrudeResult res;
+        Body* targetBody = nullptr;
 
-    ExtrudeResult res;
-    Body* targetBody = nullptr;
+        if (faceExtrude) {
+            if (!faceBody || !faceBody->hasShape()) {
+                LOG_ERROR("Extrude: face's owning body is invalid");
+                QMessageBox::critical(this, "Extrude Failed", "Selected face's body is invalid.");
+                return;
+            }
 
-    if (faceExtrude) {
-        if (!faceBody || !faceBody->hasShape()) {
-            LOG_ERROR("Extrude: face's owning body is invalid");
-            QMessageBox::critical(this, "Extrude Failed", "Selected face's body is invalid.");
+            int faceOrd = m_viewport->renderer().faceOrdinalForTriangle(faceBody, faceTriIndex);
+            if (faceOrd < 0) {
+                LOG_ERROR("Extrude: could not map triangle to face ordinal");
+                QMessageBox::critical(this, "Extrude Failed", "Could not determine face for selected triangle.");
+                return;
+            }
+
+            TopoDS_Face occtFace;
+            if (faceOrd >= 0) {
+                int idx = 0;
+                for (TopExp_Explorer exp(faceBody->shape(), TopAbs_FACE); exp.More(); exp.Next(), ++idx) {
+                    if (idx == faceOrd) { occtFace = TopoDS::Face(exp.Current()); break; }
+                }
+            }
+
+            if (occtFace.IsNull()) {
+                LOG_DEBUG("Extrude: face extraction failed (faceOrd={} tri={}) — attempting mesh fallback", faceOrd, faceTriIndex);
+
+                std::vector<int> tris;
+                for (const auto& s : m_document->selectionItems()) {
+                    if (s.type == Document::SelectedItem::Type::Face && s.bodyId == faceBody->id())
+                        tris.push_back(s.index);
+                }
+                if (tris.empty()) {
+                    tris = m_viewport->renderer().expandFaceSelection(faceBody, faceTriIndex, 10.0f, 1e-3f);
+                }
+
+                LOG_DEBUG("Extrude fallback: attempting to build face from {} triangles", tris.size());
+                if (!tris.empty()) {
+                    TopoDS_Face constructed = m_viewport->renderer().buildFaceFromTriangles(faceBody, tris);
+                    if (!constructed.IsNull()) {
+                        occtFace = constructed;
+                        LOG_INFO("Extrude: fallback constructed face from {} triangles", tris.size());
+                    } else {
+                        LOG_ERROR("Extrude: fallback face construction failed");
+                    }
+                } else {
+                    LOG_ERROR("Extrude: no triangles available for fallback");
+                }
+
+                if (occtFace.IsNull()) {
+                    QMessageBox::critical(this, "Extrude Failed", "Could not determine or construct a face for extrusion.");
+                    return;
+                }
+            }
+
+            res = ExtrudeOperation::extrudeFace(occtFace, params);
+            targetBody = faceBody;
+        } else {
+            res = ExtrudeOperation::extrude(*sketch, params);
+            targetBody = m_document->singleSelectedBody();
+        }
+
+        if (!res.success) {
+            LOG_ERROR("Extrude failed: {}", res.errorMsg.toStdString());
+            QMessageBox::critical(this, "Extrude Failed", res.errorMsg);
             return;
         }
 
-        int faceOrd = m_viewport->renderer().faceOrdinalForTriangle(faceBody, faceTriIndex);
-        if (faceOrd < 0) {
-            LOG_ERROR("Extrude: could not map triangle to face ordinal");
-            QMessageBox::critical(this, "Extrude Failed", "Could not determine face for selected triangle.");
-            return;
+        if (params.mode == 0 || !targetBody || !targetBody->hasShape()) {
+            Body* b = m_document->addBody("Extrusion");
+            b->setShape(res.shape);
+            quint64 bodyId = b->id();
+            auto bodyHolder = std::make_shared<std::unique_ptr<Body>>();
+            bool firstRedo = true;
+            m_document->undoStack().push(std::make_unique<LambdaCommand>(
+                "Extrude New",
+                [this, bodyId, bodyHolder]() {
+                    *bodyHolder = m_document->removeBodyRetain(bodyId);
+                },
+                [this, bodyHolder, firstRedo]() mutable {
+                    if (firstRedo) { firstRedo = false; return; }
+                    m_document->reinsertBody(std::move(*bodyHolder));
+                }));
+        } else {
+            TopoDS_Shape oldShape = targetBody->shape();
+            ExtrudeResult boolRes;
+            if (params.mode == 1)
+                boolRes = ExtrudeOperation::booleanAdd(oldShape, res.shape);
+            else
+                boolRes = ExtrudeOperation::booleanCut(oldShape, res.shape);
+
+            if (!boolRes.success) {
+                LOG_ERROR("Extrude boolean (mode={}) failed: {}",
+                          params.mode, boolRes.errorMsg.toStdString());
+                QMessageBox::critical(this, "Boolean Failed", boolRes.errorMsg);
+                return;
+            }
+
+            TopoDS_Shape newShape = boolRes.shape;
+            m_document->undoStack().push(std::make_unique<LambdaCommand>(
+                params.mode == 1 ? "Extrude Add" : "Extrude Remove",
+                [this, id = targetBody->id(), oldShape]() {
+                    if (Body* b = m_document->bodyById(id)) {
+                        b->setShape(oldShape);
+                        m_viewport->renderer().invalidateMesh(id);
+                        emit m_document->bodyChanged(b);
+                    }
+                },
+                [this, id = targetBody->id(), newShape]() {
+                    if (Body* b = m_document->bodyById(id)) {
+                        b->setShape(newShape);
+                        m_viewport->renderer().invalidateMesh(id);
+                        emit m_document->bodyChanged(b);
+                    }
+                }));
+
+            targetBody->setShape(newShape);
+            m_viewport->renderer().invalidateMesh(targetBody->id());
+            emit m_document->bodyChanged(targetBody);
         }
 
-        // Extract the TopoDS_Face corresponding to the ordinal (if available)
-        TopoDS_Face occtFace;
-        if (faceOrd >= 0) {
+        if (m_document->activeSketch())
+            exitSketch();
+
+        if (!faceExtrude && sketch)
+            m_document->setSketchVisible(sketch->id(), false);
+
+        m_document->clearSelection();
+    };
+
+    // Build a preview closure that computes the same shape but never mutates Document
+    m_pendingExtrudePreviewFn = [this, faceExtrude, faceBody, faceTriIndex, sketch]
+                                 (ExtrudeParams params) {
+        ExtrudeResult res;
+        Body* targetBody = nullptr;
+
+        if (faceExtrude) {
+            if (!faceBody || !faceBody->hasShape()) return;
+
+            int faceOrd = m_viewport->renderer().faceOrdinalForTriangle(faceBody, faceTriIndex);
+            if (faceOrd < 0) return;
+
+            TopoDS_Face occtFace;
             int idx = 0;
             for (TopExp_Explorer exp(faceBody->shape(), TopAbs_FACE); exp.More(); exp.Next(), ++idx) {
                 if (idx == faceOrd) { occtFace = TopoDS::Face(exp.Current()); break; }
             }
-        }
-
-        if (occtFace.IsNull()) {
-            LOG_DEBUG("Extrude: face extraction failed (faceOrd={} tri={}) — attempting mesh fallback", faceOrd, faceTriIndex);
-
-            // Gather triangle set: prefer explicit document selection if it contains face triangles
-            std::vector<int> tris;
-            for (const auto& s : m_document->selectionItems()) {
-                if (s.type == Document::SelectedItem::Type::Face && s.bodyId == faceBody->id())
-                    tris.push_back(s.index);
-            }
-            if (tris.empty()) {
-                tris = m_viewport->renderer().expandFaceSelection(faceBody, faceTriIndex, 10.0f, 1e-3f);
-            }
-
-            LOG_DEBUG("Extrude fallback: attempting to build face from {} triangles", tris.size());
-            if (!tris.empty()) {
-                TopoDS_Face constructed = m_viewport->renderer().buildFaceFromTriangles(faceBody, tris);
-                if (!constructed.IsNull()) {
-                    occtFace = constructed;
-                    LOG_INFO("Extrude: fallback constructed face from {} triangles", tris.size());
-                } else {
-                    LOG_ERROR("Extrude: fallback face construction failed");
-                }
-            } else {
-                LOG_ERROR("Extrude: no triangles available for fallback");
-            }
 
             if (occtFace.IsNull()) {
-                QMessageBox::critical(this, "Extrude Failed", "Could not determine or construct a face for extrusion.");
-                return;
+                std::vector<int> tris;
+                for (const auto& s : m_document->selectionItems()) {
+                    if (s.type == Document::SelectedItem::Type::Face && s.bodyId == faceBody->id())
+                        tris.push_back(s.index);
+                }
+                if (tris.empty())
+                    tris = m_viewport->renderer().expandFaceSelection(faceBody, faceTriIndex, 10.0f, 1e-3f);
+                if (!tris.empty())
+                    occtFace = m_viewport->renderer().buildFaceFromTriangles(faceBody, tris);
             }
+            if (occtFace.IsNull()) return;
+
+            res = ExtrudeOperation::extrudeFace(occtFace, params);
+            targetBody = faceBody;
+        } else {
+            if (!sketch) return;
+            res = ExtrudeOperation::extrude(*sketch, params);
+            targetBody = m_document->singleSelectedBody();
         }
 
-        res = ExtrudeOperation::extrudeFace(occtFace, params);
-        targetBody = faceBody;
-    } else {
-        res = ExtrudeOperation::extrude(*sketch, params);
-        targetBody = m_document->singleSelectedBody();
-    }
+        if (!res.success) return;
 
-    if (!res.success) {
-        LOG_ERROR("Extrude failed: {}", res.errorMsg.toStdString());
-        QMessageBox::critical(this, "Extrude Failed", res.errorMsg);
-        return;
-    }
-
-    if (params.mode == 0 || !targetBody || !targetBody->hasShape()) {
-        // New body — already added; redo just re-inserts it after an undo
-        Body* b = m_document->addBody("Extrusion");
-        b->setShape(res.shape);
-        quint64 bodyId = b->id();
-        auto bodyHolder = std::make_shared<std::unique_ptr<Body>>();
-        bool firstRedo = true;
-        m_document->undoStack().push(std::make_unique<LambdaCommand>(
-            "Extrude New",
-            [this, bodyId, bodyHolder]() {
-                *bodyHolder = m_document->removeBodyRetain(bodyId);
-            },
-            [this, bodyHolder, firstRedo]() mutable {
-                if (firstRedo) { firstRedo = false; return; } // already in document
-                m_document->reinsertBody(std::move(*bodyHolder));
-            }));
-    } else {
-        // Add or Remove using boolean
-        TopoDS_Shape oldShape = targetBody->shape();
-        ExtrudeResult boolRes;
-        if (params.mode == 1)
-            boolRes = ExtrudeOperation::booleanAdd(oldShape, res.shape);
-        else
-            boolRes = ExtrudeOperation::booleanCut(oldShape, res.shape);
-
-        if (!boolRes.success) {
-            LOG_ERROR("Extrude boolean (mode={}) failed: {}",
-                      params.mode, boolRes.errorMsg.toStdString());
-            QMessageBox::critical(this, "Boolean Failed", boolRes.errorMsg);
-            return;
+        TopoDS_Shape previewShape = res.shape;
+        if (params.mode != 0 && targetBody && targetBody->hasShape()) {
+            ExtrudeResult boolRes = (params.mode == 1)
+                ? ExtrudeOperation::booleanAdd(targetBody->shape(), res.shape)
+                : ExtrudeOperation::booleanCut(targetBody->shape(), res.shape);
+            if (!boolRes.success) return;
+            previewShape = boolRes.shape;
         }
 
-        TopoDS_Shape newShape = boolRes.shape;
-        m_document->undoStack().push(std::make_unique<LambdaCommand>(
-            params.mode == 1 ? "Extrude Add" : "Extrude Remove",
-            [this, id = targetBody->id(), oldShape]() {
-                if (Body* b = m_document->bodyById(id)) {
-                    b->setShape(oldShape);
-                    m_viewport->renderer().invalidateMesh(id);
-                    emit m_document->bodyChanged(b);
-                }
-            },
-            [this, id = targetBody->id(), newShape]() {
-                if (Body* b = m_document->bodyById(id)) {
-                    b->setShape(newShape);
-                    m_viewport->renderer().invalidateMesh(id);
-                    emit m_document->bodyChanged(b);
-                }
-            }));
+        if (!previewShape.IsNull()) {
+            m_viewport->renderer().setPreviewShape(previewShape);
+            m_viewport->update();
+        }
+    };
 
-        targetBody->setShape(newShape);
-        m_viewport->renderer().invalidateMesh(targetBody->id());
-        emit m_document->bodyChanged(targetBody);
+    m_toolOptionsPanel->showExtrude();
+
+    // Connect live-preview: recompute whenever params change (debounced)
+    disconnect(m_toolOptionsPanel, &ToolOptionsPanel::extrudeParamsChanged,
+               this, &MainWindow::recomputeExtrudePreview);
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::extrudeParamsChanged,
+            this, &MainWindow::recomputeExtrudePreview);
+
+    // Trigger an initial preview with the current (default) params
+    ExtrudeParams initial;
+    initial.distance  = 10.0;
+    initial.mode      = 0;
+    initial.symmetric = false;
+    recomputeExtrudePreview(initial);
+
+    // Set up the extrude 1D gizmo — single arrow along the extrude normal.
+    {
+        QVector3D gizmoOrigin;
+        QVector3D gizmoNormal;
+        if (!faceExtrude && sketch) {
+            gizmoOrigin = sketch->plane().origin();
+            gizmoNormal = sketch->plane().normal();
+        } else if (faceExtrude && faceBody) {
+            gizmoNormal = m_viewport->renderer().triangleNormal(faceBody, faceTriIndex);
+            gizmoOrigin = m_viewport->renderer().triangleCentroid(faceBody, faceTriIndex);
+        }
+        if (gizmoNormal.lengthSquared() > 0.f) {
+            m_viewport->enterExtrudeGizmoMode(gizmoOrigin, gizmoNormal, initial.distance);
+            disconnect(m_viewport, &ViewportWidget::extrudeGizmoDragged, this, nullptr);
+            disconnect(m_viewport, &ViewportWidget::extrudeGizmoDragFinished, this, nullptr);
+            // During gizmo drag: update spinbox silently and call preview immediately
+            // (bypasses the debounce timer so the viewport stays in sync with the drag)
+            connect(m_viewport, &ViewportWidget::extrudeGizmoDragged,
+                    this, [this](double dist) {
+                // Update spinbox instantly (no OCCT, no blocking)
+                m_toolOptionsPanel->setExtrudeDistanceSilent(dist);
+                ExtrudeParams p = m_toolOptionsPanel->currentExtrudeParams();
+                p.distance = dist;
+                // Schedule OCCT preview (rate-limited — fires ASAP, at most once per
+                // event-loop iteration, so the preview shape follows the gizmo smoothly)
+                scheduleExtrudePreview(p);
+            });
+            connect(m_viewport, &ViewportWidget::extrudeGizmoDragFinished,
+                    this, [this](double /*dist*/) {
+                // On release, force one final preview at the settled distance so the
+                // shape is always accurate even if the last timer tick was skipped
+                m_previewTimer->stop();
+                if (m_pendingExtrudePreviewFn)
+                    m_pendingExtrudePreviewFn(m_latestExtrudeParams);
+            });
+        }
     }
-
-    if (m_document->activeSketch())
-        exitSketch();
 #else
     QMessageBox::information(this, "Extrude", "OCCT not available.");
 #endif
@@ -654,33 +818,106 @@ void MainWindow::onMirror()
         LOG_WARN("Mirror: no single body selected");
         QMessageBox::warning(this, "Mirror", "Select exactly one body first."); return;
     }
-    MirrorDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted) { LOG_DEBUG("Mirror: dialog cancelled"); return; }
+    quint64 bodyId = body->id();
+    m_pendingMirrorFn = [this, bodyId](int plane) {
+        Body* b = m_document->bodyById(bodyId);
+        if (!b || !b->hasShape()) {
+            LOG_ERROR("Mirror: body no longer valid at apply time");
+            QMessageBox::critical(this, "Mirror Failed", "The selected body is no longer available.");
+            return;
+        }
+        LOG_INFO("Mirror: body id={} name='{}' plane={}",
+                 b->id(), b->name().toStdString(), plane);
 
-    LOG_INFO("Mirror: body id={} name='{}' plane={}",
-             body->id(), body->name().toStdString(), dlg.mirrorPlane());
+        TopoDS_Shape oldShape = b->shape();
+        TopoDS_Shape newShape = TransformOps::mirror(oldShape, plane);
 
-    TopoDS_Shape oldShape = body->shape();
-    TopoDS_Shape newShape = TransformOps::mirror(oldShape, dlg.mirrorPlane());
+        quint64 id = b->id();
+        m_document->undoStack().push(std::make_unique<LambdaCommand>("Mirror",
+            [this, id, oldShape]() {
+                if (Body* bx = m_document->bodyById(id)) {
+                    bx->setShape(oldShape); m_viewport->renderer().invalidateMesh(id);
+                    emit m_document->bodyChanged(bx);
+                }
+            },
+            [this, id, newShape]() {
+                if (Body* bx = m_document->bodyById(id)) {
+                    bx->setShape(newShape); m_viewport->renderer().invalidateMesh(id);
+                    emit m_document->bodyChanged(bx);
+                }
+            }));
 
-    quint64 id = body->id();
-    m_document->undoStack().push(std::make_unique<LambdaCommand>("Mirror",
-        [this, id, oldShape]() {
-            if (Body* b = m_document->bodyById(id)) {
-                b->setShape(oldShape); m_viewport->renderer().invalidateMesh(id);
-                emit m_document->bodyChanged(b);
-            }
-        },
-        [this, id, newShape]() {
-            if (Body* b = m_document->bodyById(id)) {
-                b->setShape(newShape); m_viewport->renderer().invalidateMesh(id);
-                emit m_document->bodyChanged(b);
-            }
-        }));
+        b->setShape(newShape);
+        m_viewport->renderer().invalidateMesh(id);
+        emit m_document->bodyChanged(b);
+    };
 
-    body->setShape(newShape);
-    m_viewport->renderer().invalidateMesh(id);
-    emit m_document->bodyChanged(body);
+    // Build a preview closure: compute mirrored shape without mutating Document
+    m_pendingMirrorPreviewFn = [this, bodyId](int plane) {
+        Body* b = m_document->bodyById(bodyId);
+        if (!b || !b->hasShape()) return;
+        TopoDS_Shape mirrored = TransformOps::mirror(b->shape(), plane);
+        if (!mirrored.IsNull()) {
+            m_viewport->renderer().setPreviewShape(mirrored);
+            m_viewport->update();
+        }
+    };
+
+    m_toolOptionsPanel->showMirror();
+
+    // Connect live-preview: recompute whenever plane changes
+    disconnect(m_toolOptionsPanel, &ToolOptionsPanel::mirrorPlaneChanged,
+               this, &MainWindow::recomputeMirrorPreview);
+    connect(m_toolOptionsPanel, &ToolOptionsPanel::mirrorPlaneChanged,
+            this, &MainWindow::recomputeMirrorPreview);
+
+    // Trigger an initial preview with the default plane (XZ = 0)
+    recomputeMirrorPreview(0);
+#endif
+}
+
+void MainWindow::recomputeExtrudePreview(ExtrudeParams params)
+{
+#ifdef ELCAD_HAVE_OCCT
+    // Move gizmo immediately so it tracks the spinbox without waiting for OCCT
+    m_viewport->setExtrudeGizmoDistance(params.distance);
+    scheduleExtrudePreview(params);
+#else
+    Q_UNUSED(params)
+#endif
+}
+
+void MainWindow::scheduleExtrudePreview(ExtrudeParams params)
+{
+#ifdef ELCAD_HAVE_OCCT
+    m_latestExtrudeParams = params;
+    // Rate-limit: only start a new timer tick if none is already pending.
+    // This means during continuous drag the timer fires once per event-loop
+    // iteration (0 ms delay = ASAP) rather than being reset on every event.
+    if (!m_previewTimer->isActive()) {
+        m_previewTimer->disconnect();
+        connect(m_previewTimer, &QTimer::timeout, this, [this] {
+            if (m_pendingExtrudePreviewFn)
+                m_pendingExtrudePreviewFn(m_latestExtrudeParams);
+        });
+        m_previewTimer->start(0);
+    }
+#else
+    Q_UNUSED(params)
+#endif
+}
+
+void MainWindow::recomputeMirrorPreview(int plane)
+{
+#ifdef ELCAD_HAVE_OCCT
+    m_previewTimer->disconnect();
+    connect(m_previewTimer, &QTimer::timeout, this, [this, plane] {
+        if (m_pendingMirrorPreviewFn)
+            m_pendingMirrorPreviewFn(plane);
+    });
+    m_previewTimer->start(200);
+#else
+    Q_UNUSED(plane)
 #endif
 }
 
@@ -692,60 +929,61 @@ void MainWindow::onBooleanUnion()
                  m_document->bodyCount());
         QMessageBox::warning(this, "Boolean Union", "Need at least 2 bodies."); return;
     }
-    BooleanDialog dlg(m_document.get(), BooleanDialog::Union, this);
-    if (dlg.exec() != QDialog::Accepted) { LOG_DEBUG("Boolean union: dialog cancelled"); return; }
+    m_pendingBooleanFn = [this](quint64 targetId, quint64 toolId) {
+        Body* target = m_document->bodyById(targetId);
+        Body* tool   = m_document->bodyById(toolId);
+        if (!target || !tool || target == tool) {
+            LOG_ERROR("Boolean union: invalid body selection — target id={} tool id={} "
+                      "(same={}, null target={}, null tool={})",
+                      targetId, toolId,
+                      target == tool, target == nullptr, tool == nullptr);
+            QMessageBox::warning(this, "Boolean Union", "Invalid body selection."); return;
+        }
 
-    Body* target = m_document->bodyById(dlg.targetBodyId());
-    Body* tool   = m_document->bodyById(dlg.toolBodyId());
-    if (!target || !tool || target == tool) {
-        LOG_ERROR("Boolean union: invalid body selection — target id={} tool id={} "
-                  "(same={}, null target={}, null tool={})",
-                  dlg.targetBodyId(), dlg.toolBodyId(),
-                  target == tool, target == nullptr, tool == nullptr);
-        QMessageBox::warning(this, "Boolean Union", "Invalid body selection."); return;
-    }
+        LOG_INFO("Boolean union: target id={} name='{}' + tool id={} name='{}'",
+                 target->id(), target->name().toStdString(),
+                 tool->id(), tool->name().toStdString());
 
-    LOG_INFO("Boolean union: target id={} name='{}' + tool id={} name='{}'",
-             target->id(), target->name().toStdString(),
-             tool->id(), tool->name().toStdString());
+        ExtrudeResult res = ExtrudeOperation::booleanAdd(target->shape(), tool->shape());
+        if (!res.success) {
+            LOG_ERROR("Boolean union failed: {}", res.errorMsg.toStdString());
+            QMessageBox::critical(this, "Union Failed", res.errorMsg); return;
+        }
 
-    ExtrudeResult res = ExtrudeOperation::booleanAdd(target->shape(), tool->shape());
-    if (!res.success) {
-        LOG_ERROR("Boolean union failed: {}", res.errorMsg.toStdString());
-        QMessageBox::critical(this, "Union Failed", res.errorMsg); return;
-    }
+        TopoDS_Shape oldTargetShape = target->shape();
+        TopoDS_Shape newTargetShape = res.shape;
+        quint64 tid = target->id();
+        quint64 toid = tool->id();
 
-    TopoDS_Shape oldTargetShape = target->shape();
-    TopoDS_Shape newTargetShape = res.shape;
-    quint64 targetId = target->id();
-    quint64 toolId   = tool->id();
+        target->setShape(newTargetShape);
+        m_viewport->renderer().invalidateMesh(tid);
+        emit m_document->bodyChanged(target);
+        auto toolHolder = std::make_shared<std::unique_ptr<Body>>(
+            m_document->removeBodyRetain(toid));
 
-    target->setShape(newTargetShape);
-    m_viewport->renderer().invalidateMesh(targetId);
-    emit m_document->bodyChanged(target);
-    auto toolHolder = std::make_shared<std::unique_ptr<Body>>(
-        m_document->removeBodyRetain(toolId));
+        bool firstRedo = true;
+        m_document->undoStack().push(std::make_unique<LambdaCommand>(
+            "Boolean Union",
+            [this, tid, oldTargetShape, toolHolder]() {
+                if (Body* b = m_document->bodyById(tid)) {
+                    b->setShape(oldTargetShape);
+                    m_viewport->renderer().invalidateMesh(tid);
+                    emit m_document->bodyChanged(b);
+                }
+                m_document->reinsertBody(std::move(*toolHolder));
+            },
+            [this, tid, newTargetShape, toolHolder, toid, firstRedo]() mutable {
+                if (firstRedo) { firstRedo = false; return; }
+                if (Body* b = m_document->bodyById(tid)) {
+                    b->setShape(newTargetShape);
+                    m_viewport->renderer().invalidateMesh(tid);
+                    emit m_document->bodyChanged(b);
+                }
+                *toolHolder = m_document->removeBodyRetain(toid);
+            }));
+    };
 
-    bool firstRedo = true;
-    m_document->undoStack().push(std::make_unique<LambdaCommand>(
-        "Boolean Union",
-        [this, targetId, oldTargetShape, toolHolder]() {
-            if (Body* b = m_document->bodyById(targetId)) {
-                b->setShape(oldTargetShape);
-                m_viewport->renderer().invalidateMesh(targetId);
-                emit m_document->bodyChanged(b);
-            }
-            m_document->reinsertBody(std::move(*toolHolder));
-        },
-        [this, targetId, newTargetShape, toolHolder, toolId, firstRedo]() mutable {
-            if (firstRedo) { firstRedo = false; return; }
-            if (Body* b = m_document->bodyById(targetId)) {
-                b->setShape(newTargetShape);
-                m_viewport->renderer().invalidateMesh(targetId);
-                emit m_document->bodyChanged(b);
-            }
-            *toolHolder = m_document->removeBodyRetain(toolId);
-        }));
+    m_toolOptionsPanel->showBooleanUnion();
 #endif
 }
 
@@ -757,58 +995,59 @@ void MainWindow::onBooleanSubtract()
                  m_document->bodyCount());
         QMessageBox::warning(this, "Boolean Subtract", "Need at least 2 bodies."); return;
     }
-    BooleanDialog dlg(m_document.get(), BooleanDialog::Subtract, this);
-    if (dlg.exec() != QDialog::Accepted) { LOG_DEBUG("Boolean subtract: dialog cancelled"); return; }
+    m_pendingBooleanFn = [this](quint64 targetId, quint64 toolId) {
+        Body* target = m_document->bodyById(targetId);
+        Body* tool   = m_document->bodyById(toolId);
+        if (!target || !tool || target == tool) {
+            LOG_ERROR("Boolean subtract: invalid body selection — target id={} tool id={}",
+                      targetId, toolId);
+            QMessageBox::warning(this, "Boolean Subtract", "Invalid body selection."); return;
+        }
 
-    Body* target = m_document->bodyById(dlg.targetBodyId());
-    Body* tool   = m_document->bodyById(dlg.toolBodyId());
-    if (!target || !tool || target == tool) {
-        LOG_ERROR("Boolean subtract: invalid body selection — target id={} tool id={}",
-                  dlg.targetBodyId(), dlg.toolBodyId());
-        QMessageBox::warning(this, "Boolean Subtract", "Invalid body selection."); return;
-    }
+        LOG_INFO("Boolean subtract: base id={} name='{}' - tool id={} name='{}'",
+                 target->id(), target->name().toStdString(),
+                 tool->id(), tool->name().toStdString());
 
-    LOG_INFO("Boolean subtract: base id={} name='{}' - tool id={} name='{}'",
-             target->id(), target->name().toStdString(),
-             tool->id(), tool->name().toStdString());
+        ExtrudeResult res = ExtrudeOperation::booleanCut(target->shape(), tool->shape());
+        if (!res.success) {
+            LOG_ERROR("Boolean subtract failed: {}", res.errorMsg.toStdString());
+            QMessageBox::critical(this, "Subtract Failed", res.errorMsg); return;
+        }
 
-    ExtrudeResult res = ExtrudeOperation::booleanCut(target->shape(), tool->shape());
-    if (!res.success) {
-        LOG_ERROR("Boolean subtract failed: {}", res.errorMsg.toStdString());
-        QMessageBox::critical(this, "Subtract Failed", res.errorMsg); return;
-    }
+        TopoDS_Shape oldTargetShape = target->shape();
+        TopoDS_Shape newTargetShape = res.shape;
+        quint64 tid = target->id();
+        quint64 toid = tool->id();
 
-    TopoDS_Shape oldTargetShape = target->shape();
-    TopoDS_Shape newTargetShape = res.shape;
-    quint64 targetId = target->id();
-    quint64 toolId   = tool->id();
+        target->setShape(newTargetShape);
+        m_viewport->renderer().invalidateMesh(tid);
+        emit m_document->bodyChanged(target);
+        auto toolHolder = std::make_shared<std::unique_ptr<Body>>(
+            m_document->removeBodyRetain(toid));
 
-    target->setShape(newTargetShape);
-    m_viewport->renderer().invalidateMesh(targetId);
-    emit m_document->bodyChanged(target);
-    auto toolHolder = std::make_shared<std::unique_ptr<Body>>(
-        m_document->removeBodyRetain(toolId));
+        bool firstRedo = true;
+        m_document->undoStack().push(std::make_unique<LambdaCommand>(
+            "Boolean Subtract",
+            [this, tid, oldTargetShape, toolHolder]() {
+                if (Body* b = m_document->bodyById(tid)) {
+                    b->setShape(oldTargetShape);
+                    m_viewport->renderer().invalidateMesh(tid);
+                    emit m_document->bodyChanged(b);
+                }
+                m_document->reinsertBody(std::move(*toolHolder));
+            },
+            [this, tid, newTargetShape, toolHolder, toid, firstRedo]() mutable {
+                if (firstRedo) { firstRedo = false; return; }
+                if (Body* b = m_document->bodyById(tid)) {
+                    b->setShape(newTargetShape);
+                    m_viewport->renderer().invalidateMesh(tid);
+                    emit m_document->bodyChanged(b);
+                }
+                *toolHolder = m_document->removeBodyRetain(toid);
+            }));
+    };
 
-    bool firstRedo = true;
-    m_document->undoStack().push(std::make_unique<LambdaCommand>(
-        "Boolean Subtract",
-        [this, targetId, oldTargetShape, toolHolder]() {
-            if (Body* b = m_document->bodyById(targetId)) {
-                b->setShape(oldTargetShape);
-                m_viewport->renderer().invalidateMesh(targetId);
-                emit m_document->bodyChanged(b);
-            }
-            m_document->reinsertBody(std::move(*toolHolder));
-        },
-        [this, targetId, newTargetShape, toolHolder, toolId, firstRedo]() mutable {
-            if (firstRedo) { firstRedo = false; return; }
-            if (Body* b = m_document->bodyById(targetId)) {
-                b->setShape(newTargetShape);
-                m_viewport->renderer().invalidateMesh(targetId);
-                emit m_document->bodyChanged(b);
-            }
-            *toolHolder = m_document->removeBodyRetain(toolId);
-        }));
+    m_toolOptionsPanel->showBooleanSubtract();
 #endif
 }
 

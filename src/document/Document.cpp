@@ -104,8 +104,11 @@ void Document::addSelection(const SelectedItem& it)
     if (isSelected(it)) return;
     m_selection.push_back(it);
 
-    // When selecting a whole body, keep legacy flag in Body for UI convenience
-    if (it.type == SelectedItem::Type::Body) {
+    // Only update body selection flags for body-related item types.
+    bool isSketchType = (it.type == SelectedItem::Type::SketchPoint ||
+                         it.type == SelectedItem::Type::SketchLine  ||
+                         it.type == SelectedItem::Type::SketchArea);
+    if (!isSketchType) {
         if (Body* b = bodyById(it.bodyId)) b->setSelected(true);
     }
 
@@ -119,8 +122,21 @@ void Document::removeSelection(const SelectedItem& it)
     if (itPos == m_selection.end()) return;
     m_selection.erase(itPos);
 
-    if (it.type == SelectedItem::Type::Body) {
-        if (Body* b = bodyById(it.bodyId)) b->setSelected(false);
+    bool isSketchType = (it.type == SelectedItem::Type::SketchPoint ||
+                         it.type == SelectedItem::Type::SketchLine  ||
+                         it.type == SelectedItem::Type::SketchArea);
+    if (!isSketchType) {
+        if (it.type == SelectedItem::Type::Body) {
+            if (Body* b = bodyById(it.bodyId)) b->setSelected(false);
+        } else {
+            // For sub-item (face/edge/vertex) removal: deselect the body only when it has
+            // no remaining selection items at all.
+            if (Body* b = bodyById(it.bodyId)) {
+                bool stillSelected = std::any_of(m_selection.begin(), m_selection.end(),
+                    [&](const SelectedItem& s){ return s.bodyId == it.bodyId; });
+                if (!stillSelected) b->setSelected(false);
+            }
+        }
     }
 
     emit selectionChanged();
@@ -159,6 +175,7 @@ Sketch* Document::beginSketch(const SketchPlane& plane)
 {
     LOG_INFO("Document: sketch started on plane '{}'", plane.name().toStdString());
     m_activeSketch = std::make_unique<Sketch>(plane, this);
+    m_activeSketch->setName(QString::asprintf("Sketch%02d", m_nextSketchNumber++));
     emit activeSketchChanged(m_activeSketch.get());
     return m_activeSketch.get();
 }
@@ -170,6 +187,55 @@ void Document::endSketch()
              m_activeSketch->entities().size());
     m_sketches.push_back(std::move(m_activeSketch));
     emit activeSketchChanged(nullptr);
+    emit sketchAdded(m_sketches.back().get());
+}
+
+void Document::reactivateSketch(Sketch* sketch)
+{
+    if (!sketch) return;
+    auto it = std::find_if(m_sketches.begin(), m_sketches.end(),
+        [sketch](const auto& s) { return s.get() == sketch; });
+    if (it == m_sketches.end()) {
+        LOG_WARN("Document::reactivateSketch: sketch not found in completed list");
+        return;
+    }
+    // Push any currently active sketch back to the completed list.
+    if (m_activeSketch) {
+        m_sketches.push_back(std::move(m_activeSketch));
+        emit sketchAdded(m_sketches.back().get());
+    }
+
+    emit sketchRemoved((*it)->id());
+    m_activeSketch = std::move(*it);
+    m_sketches.erase(it);
+
+    LOG_INFO("Document: sketch reactivated — id={} {} entities",
+             m_activeSketch->id(), m_activeSketch->entities().size());
+    emit activeSketchChanged(m_activeSketch.get());
+}
+
+Sketch* Document::sketchById(quint64 id) const
+{
+    for (auto& s : m_sketches)
+        if (s->id() == id) return s.get();
+    return nullptr;
+}
+
+void Document::setSketchVisible(quint64 id, bool visible)
+{
+    if (Sketch* s = sketchById(id)) {
+        s->setVisible(visible);
+        if (!visible) {
+            s->clearSelection();
+            auto it = std::remove_if(m_selection.begin(), m_selection.end(),
+                [id](const SelectedItem& si) { return si.sketchId == id; });
+            if (it != m_selection.end()) {
+                m_selection.erase(it, m_selection.end());
+                emit selectionChanged();
+            }
+        }
+        emit sketchVisibilityChanged(s);
+    }
 }
 
 } // namespace elcad

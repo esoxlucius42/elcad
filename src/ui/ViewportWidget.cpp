@@ -6,6 +6,7 @@
 #include "document/UndoStack.h"
 #include "sketch/Sketch.h"
 #include "sketch/SketchPlane.h"
+#include "sketch/SketchPicker.h"
 #include "tools/SketchTool.h"
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -60,7 +61,7 @@ void ViewportWidget::paintGL()
     if (m_activeTool)
         preview = m_activeTool->previewEntities();
 
-    const QVector2D* snapPtr = m_hasSnapPos ? &m_snapPos : nullptr;
+    const SnapResult* snapPtr = (m_snapResult.type != SnapResult::None) ? &m_snapResult : nullptr;
     m_renderer.render(m_camera, m_document,
                       preview.empty() ? nullptr : &preview,
                       snapPtr);
@@ -77,11 +78,44 @@ void ViewportWidget::setGizmoMode(GizmoMode mode)
     update();
 }
 
+void ViewportWidget::enterExtrudeGizmoMode(const QVector3D& origin, const QVector3D& normal, double startDist)
+{
+    Gizmo& g = m_renderer.gizmo();
+    m_extrudeGizmoOrigin   = origin;
+    m_extrudeGizmoNormal   = normal.normalized();
+    m_extrudeDragStartDist = startDist;
+    // Place the gizmo handle on the extruded face (not at the base sketch/face)
+    g.setPosition(origin + m_extrudeGizmoNormal * static_cast<float>(startDist));
+    g.setExtrudeAxis(normal);
+    g.setMode(GizmoMode::Extrude1D);
+    g.setVisible(true);
+    update();
+}
+
+void ViewportWidget::setExtrudeGizmoDistance(double dist)
+{
+    m_renderer.gizmo().setPosition(
+        m_extrudeGizmoOrigin + m_extrudeGizmoNormal * static_cast<float>(dist));
+    update();
+}
+
+void ViewportWidget::exitExtrudeGizmoMode()
+{
+    Gizmo& g = m_renderer.gizmo();
+    if (g.mode() == GizmoMode::Extrude1D) {
+        g.setVisible(false);
+        g.endDrag();
+    }
+    if (m_dragMode == DragMode::ExtrudeGizmoDrag)
+        m_dragMode = DragMode::None;
+    update();
+}
+
 void ViewportWidget::enterSketchMode(Sketch* sketch)
 {
     m_sketch      = sketch;
     m_activeTool  = nullptr;
-    m_hasSnapPos  = false;
+    m_snapResult  = {};
     m_renderer.setActiveSketch(sketch);
     update();
 }
@@ -90,7 +124,7 @@ void ViewportWidget::exitSketchMode()
 {
     m_sketch      = nullptr;
     m_activeTool  = nullptr;
-    m_hasSnapPos  = false;
+    m_snapResult  = {};
     m_renderer.setActiveSketch(nullptr);
     update();
 }
@@ -120,6 +154,25 @@ QVector2D ViewportWidget::screenToSketch(QPoint screenPos) const
 
 void ViewportWidget::mousePressEvent(QMouseEvent* e)
 {
+    // ── Extrude 1D gizmo: takes priority over sketch tool when Extrude1D is active ──
+    if (e->button() == Qt::LeftButton &&
+        m_renderer.gizmo().visible() &&
+        m_renderer.gizmo().mode() == GizmoMode::Extrude1D) {
+        QVector3D ro, rd;
+        m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
+        GizmoHandle handle = m_renderer.gizmo().pick(ro, rd, m_camera.position(),
+                                                      width(), height(), m_camera.fov());
+        if (handle != GizmoHandle::None) {
+            m_lmbDown     = true;
+            m_lmbPressPos = e->pos();
+            m_dragMode    = DragMode::ExtrudeGizmoDrag;
+            m_renderer.gizmo().beginDrag(handle, ro, rd,
+                                          m_camera.position(), width(), height(), m_camera.fov());
+            update();
+            return;
+        }
+    }
+
     // ── Sketch mode ───────────────────────────────────────────────────────────
     if (m_sketch && m_activeTool) {
         if (e->button() != Qt::MiddleButton && e->button() != Qt::RightButton) {
@@ -132,8 +185,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
             update();
             return;
         }
-        // RMB in sketch mode with tool: cancel tool
-        if (e->button() == Qt::RightButton && m_activeTool) {
+        // RMB in sketch mode with tool: cancel operation only if tool is mid-operation.
+        // If the tool is idle, fall through to let RMB orbit the view.
+        if (e->button() == Qt::RightButton && m_activeTool->isInProgress()) {
             QVector2D rawPos = screenToSketch(e->pos());
             m_activeTool->onMousePress(rawPos, e->buttons(), e->modifiers());
             update();
@@ -146,8 +200,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
         m_dragMode = DragMode::Orbit;
         m_camera.orbitBegin(e->pos());
     } else if (e->button() == Qt::RightButton && m_sketch) {
-        // In sketch mode, RMB orbits if no tool active
-        if (!m_activeTool) {
+        // In sketch mode, RMB orbits when no tool is in progress
+        if (!m_activeTool || !m_activeTool->isInProgress()) {
             m_dragMode = DragMode::Orbit;
             m_camera.orbitBegin(e->pos());
         }
@@ -200,6 +254,10 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* e)
         if (m_dragMode == DragMode::GizmoDrag) {
             commitGizmoDrag();
             m_dragMode = DragMode::None;
+        } else if (m_dragMode == DragMode::ExtrudeGizmoDrag) {
+            m_renderer.gizmo().endDrag();
+            m_dragMode = DragMode::None;
+            emit extrudeGizmoDragFinished(m_extrudeGizmoCurrDist);
         } else if (m_dragMode == DragMode::BoxSelect) {
             m_rubberBand->hide();
             m_dragMode = DragMode::None;
@@ -223,8 +281,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
     if (m_sketch) {
         QVector2D rawPos = screenToSketch(e->pos());
         SnapResult snap  = m_snapEngine.snap(rawPos, m_sketch);
-        m_snapPos    = snap.pos;
-        m_hasSnapPos = true;
+        m_snapResult = snap;
 
         emit sketchCursorPos(snap.pos.x(), snap.pos.y());
 
@@ -270,6 +327,21 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
 #endif
         update();
         return;
+    } else if (m_dragMode == DragMode::ExtrudeGizmoDrag) {
+        QVector3D ro, rd;
+        m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
+        Gizmo::DragDelta delta = m_renderer.gizmo().updateDrag(ro, rd,
+                                    m_camera.position(), width(), height(), m_camera.fov());
+        double newDist = m_extrudeDragStartDist
+                       + static_cast<double>(QVector3D::dotProduct(delta.translate, m_extrudeGizmoNormal));
+        newDist = qMax(0.01, newDist);
+        m_extrudeGizmoCurrDist = newDist;
+        // Move the gizmo handle to reflect the current extrude distance
+        m_renderer.gizmo().setPosition(
+            m_extrudeGizmoOrigin + m_extrudeGizmoNormal * static_cast<float>(newDist));
+        emit extrudeGizmoDragged(newDist);
+        update();
+        return;
     } else if (m_lmbDown && !m_sketch) {
         QPoint delta = e->pos() - m_lmbPressPos;
         if (m_dragMode != DragMode::BoxSelect &&
@@ -295,6 +367,29 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* e)
             update();
     }
 
+    // ── Completed sketch hover picking ────────────────────────────────────────
+    if (!m_sketch && m_dragMode == DragMode::None && m_document) {
+        QVector3D ro, rd;
+        m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
+        if (m_camera.isPerspective()) ro = m_camera.position();
+
+        SketchHit hit = SketchPicker::pick(ro, rd, m_document);
+        bool newValid = hit.valid();
+        Document::SelectedItem newItem = newValid ? hit.item : Document::SelectedItem{};
+
+        bool changed = (newValid != m_hasHoveredSketchItem) ||
+                       (newValid && !(newItem == m_hoveredSketchItem));
+        if (changed) {
+            m_hasHoveredSketchItem = newValid;
+            m_hoveredSketchItem    = newItem;
+            if (newValid)
+                m_renderer.setSketchHover(newItem);
+            else
+                m_renderer.clearSketchHover();
+            update();
+        }
+    }
+
     // ── World cursor coordinates for status bar ───────────────────────────────
     if (!m_sketch) {
         QVector3D ro, rd;
@@ -313,6 +408,23 @@ void ViewportWidget::wheelEvent(QWheelEvent* e)
 {
     m_camera.zoom(e->angleDelta().y());
     update();
+}
+
+void ViewportWidget::mouseDoubleClickEvent(QMouseEvent* e)
+{
+    if (e->button() != Qt::LeftButton) return;
+    if (m_sketch || !m_document) return;  // already in sketch-edit mode
+
+    QVector3D ro, rd;
+    m_camera.unprojectRay(e->pos().x(), e->pos().y(), width(), height(), ro, rd);
+    if (m_camera.isPerspective()) ro = m_camera.position();
+
+    SketchHit hit = SketchPicker::pick(ro, rd, m_document);
+    if (hit.valid()) {
+        LOG_INFO("Viewport: double-click on sketch id={} — requesting re-edit",
+                 hit.sketch->id());
+        emit requestReactivateSketch(hit.sketch);
+    }
 }
 
 // ── Gizmo drag commit ─────────────────────────────────────────────────────────
@@ -363,6 +475,13 @@ void ViewportWidget::handlePickClick(QPoint pos, bool addToSelection)
     bool hit = m_renderer.pickHitAt(pos.x(), pos.y(), m_document, m_camera, hitItem);
 
     if (!hit) {
+        // No body/face hit — check for hovered sketch entity.
+        if (m_hasHoveredSketchItem) {
+            if (!addToSelection) m_document->clearSelection();
+            m_document->addSelection(m_hoveredSketchItem);
+            update();
+            return;
+        }
         m_document->clearSelection();
         update();
         return;
@@ -449,6 +568,17 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
     }
 
     switch (e->key()) {
+    // ── Sketch tool shortcuts (only active when in sketch mode) ───────────────
+    case Qt::Key_L:
+        if (m_sketch) { emit requestSketchTool(1); break; }
+        break;
+    case Qt::Key_W:
+        if (m_sketch) { emit requestSketchTool(2); break; }
+        break;
+    case Qt::Key_C:
+        if (m_sketch) { emit requestSketchTool(3); break; }
+        break;
+    // ── 3D gizmo mode shortcuts ───────────────────────────────────────────────
     case Qt::Key_T:
         m_renderer.gizmo().setMode(GizmoMode::Translate);
         LOG_DEBUG("Viewport: gizmo mode → Translate");
@@ -489,8 +619,13 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
     }
     case Qt::Key_Escape:
         if (m_sketch) {
-            // In sketch mode: Esc with no in-progress tool action → exit sketch
-            emit requestExitSketch();
+            if (m_activeTool) {
+                // First Esc deactivates the current drawing tool → back to selection
+                emit requestSketchTool(0);
+            } else {
+                // No tool active: Esc exits sketch
+                emit requestExitSketch();
+            }
         } else if (m_document) {
             m_document->clearSelection();
             // Document::clearSelection already emits selectionChanged
