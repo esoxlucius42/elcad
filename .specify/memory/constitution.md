@@ -81,13 +81,14 @@ Spec Kit artifacts MUST stay aligned with this constitution and with the
 repository's Copilot integration model. In GitHub Copilot CLI, contributors
 MUST refer to repository custom agents under `.github/agents/` rather than
 repository-defined `/speckit...` slash commands. Agents and contributors MUST
-NOT create commits, tags, or pushes autonomously; git history changes require
-explicit user instruction.
+NOT create commits, tags, pushes, or branches autonomously; git history changes
+require explicit user instruction. Agent work MUST stay on the `main` branch
+unless the user explicitly directs otherwise.
 
 Rationale: elcad has already standardized on custom agents plus manual control
 over version control actions. Keeping specs, templates, and guidance aligned to
 that workflow prevents tool confusion and protects the repository's no-autocommit
-rule.
+and no-autobranch rules.
 
 ## Project Constraints
 

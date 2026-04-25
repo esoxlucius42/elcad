@@ -1,4 +1,5 @@
 #include "sketch/SketchPicker.h"
+#include "core/Logger.h"
 #include "sketch/SketchPlane.h"
 #include "sketch/SketchEntity.h"
 #include <QtMath>
@@ -513,6 +514,99 @@ std::vector<SketchPicker::Loop> SketchPicker::findClosedLoops(const Sketch& sket
     }
 
     return result;
+}
+
+std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
+    const Sketch& sketch,
+    const SketchFaceSelection& selection,
+    QString* errorMsg)
+{
+    if (errorMsg) errorMsg->clear();
+
+    if (selection.sketchId != sketch.id()) {
+        if (errorMsg)
+            *errorMsg = "Selected sketch faces do not belong to the current sketch.";
+        LOG_WARN("SketchPicker::resolveSelectedProfiles: sketch mismatch (selection={}, sketch={})",
+                 selection.sketchId, sketch.id());
+        return {};
+    }
+
+    if (selection.loopIndices.empty()) {
+        if (errorMsg)
+            *errorMsg = "Select at least one sketch face to extrude.";
+        LOG_WARN("SketchPicker::resolveSelectedProfiles: empty loop selection for sketch {}",
+                 sketch.id());
+        return {};
+    }
+
+    const auto loops = findClosedLoops(sketch);
+    std::vector<SelectedSketchProfile> profiles;
+    profiles.reserve(selection.loopIndices.size());
+
+    for (int loopIndex : selection.loopIndices) {
+        if (loopIndex < 0 || loopIndex >= static_cast<int>(loops.size())) {
+            if (errorMsg)
+                *errorMsg = QString("Selected sketch face %1 could not be resolved.")
+                                .arg(loopIndex);
+            LOG_WARN("SketchPicker::resolveSelectedProfiles: loop index {} out of range (loop count={})",
+                     loopIndex, loops.size());
+            return {};
+        }
+
+        const auto& loop = loops[loopIndex];
+        if (loop.polygon.size() < 3) {
+            if (errorMsg)
+                *errorMsg = QString("Selected sketch face %1 is degenerate.").arg(loopIndex);
+            LOG_WARN("SketchPicker::resolveSelectedProfiles: loop {} has only {} polygon points",
+                     loopIndex, loop.polygon.size());
+            return {};
+        }
+
+        SelectedSketchProfile profile;
+        profile.sketchId = sketch.id();
+        profile.loopIndex = loopIndex;
+        profile.plane = sketch.plane();
+        profile.polygon = loop.polygon;
+        profile.isClosed = true;
+
+        for (quint64 entityId : loop.entityIds) {
+            if (std::find(profile.sourceEntityIds.begin(),
+                          profile.sourceEntityIds.end(),
+                          entityId) != profile.sourceEntityIds.end()) {
+                LOG_DEBUG("SketchPicker::resolveSelectedProfiles: ignoring duplicate entity {} for loop {}",
+                          entityId, loopIndex);
+                continue;
+            }
+
+            const SketchEntity* entity = sketch.entityById(entityId);
+            if (!entity || entity->construction) {
+                if (errorMsg)
+                    *errorMsg = QString("Selected sketch face %1 references invalid geometry.")
+                                    .arg(loopIndex);
+                LOG_WARN("SketchPicker::resolveSelectedProfiles: entity {} missing or construction for loop {}",
+                         entityId, loopIndex);
+                return {};
+            }
+
+            profile.sourceEntityIds.push_back(entityId);
+            profile.sourceEntities.push_back(*entity);
+        }
+
+        if (profile.sourceEntities.empty()) {
+            if (errorMsg)
+                *errorMsg = QString("Selected sketch face %1 has no usable boundary geometry.")
+                                .arg(loopIndex);
+            LOG_WARN("SketchPicker::resolveSelectedProfiles: loop {} resolved no source entities",
+                     loopIndex);
+            return {};
+        }
+
+        profiles.push_back(std::move(profile));
+    }
+
+    LOG_DEBUG("SketchPicker::resolveSelectedProfiles: resolved {} profiles for sketch {}",
+              profiles.size(), sketch.id());
+    return profiles;
 }
 
 // ── SketchPicker::pointInPolygon ──────────────────────────────────────────────

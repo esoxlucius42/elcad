@@ -1,8 +1,10 @@
 #pragma once
 #include "document/Body.h"
+#include "sketch/SketchProfiles.h"
 #include <QObject>
-#include <vector>
 #include <memory>
+#include <optional>
+#include <vector>
 
 namespace elcad {
 
@@ -50,6 +52,7 @@ public:
     void   toggleSelection(const SelectedItem& it);
     bool   isSelected(const SelectedItem& it) const;
     std::vector<SelectedItem> selectionItems() const;
+    std::optional<SketchFaceSelection> selectedSketchFaces(quint64 sketchId = 0) const;
 
     Body*  singleSelectedBody() const;
 

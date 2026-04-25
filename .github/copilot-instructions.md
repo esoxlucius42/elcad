@@ -91,11 +91,15 @@ Operations that can fail return a result struct with a `bool success` and `QStri
 ## Version Control
 
 - **Never commit code autonomously.** Do not run `git commit`, `git push`, `git tag`, or any operation that records or publishes a commit without explicit user instruction.
+- **Never create or switch branches autonomously.** Agents must not run `git branch`, `git switch`, `git checkout -b`, or any other command that creates or moves work onto a different branch.
+- **Always use `main`.** Agent work in this repository must stay on the `main` branch unless the user explicitly instructs otherwise.
 - The user decides when and what to commit. Agents may stage files (`git add`) or show diffs to help the user review changes, but must stop short of committing.
 
 <!-- SPECKIT START -->
+Current implementation plan: `specs/002-fix-multi-shape-extrude/plan.md`
+
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
+shell commands, and other important information, read the current plan.
 
 In GitHub Copilot CLI, this repository's Spec Kit integration is exposed as
 repository-level custom agents under `.github/agents/`, not as repository-defined
@@ -110,6 +114,7 @@ When working in Copilot CLI, direct users to one of these supported entrypoints 
 The `.github/prompts/` files are part of the Spec Kit installation, but Copilot CLI
 support should be described in terms of custom agents and custom instructions.
 
-Keep Spec Kit git auto-commit disabled for this repository. The repository rule
-against autonomous commits takes precedence over generated Spec Kit defaults.
+Keep Spec Kit git auto-commit disabled for this repository. The repository rules
+against autonomous commits and autonomous branch creation take precedence over
+generated Spec Kit defaults.
 <!-- SPECKIT END -->

@@ -22,8 +22,59 @@
 #include <gp_Trsf.hxx>
 #include <BRepCheck_Analyzer.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <QtMath>
 
 namespace elcad {
+
+static ExtrudeResult extrudeFaceAlongNormal(const TopoDS_Face& face,
+                                            const QVector3D& normal,
+                                            const ExtrudeParams& params,
+                                            const QString& failureContext)
+{
+    ExtrudeResult result;
+    const double d = params.distance;
+
+    try {
+        if (params.symmetric) {
+            gp_Vec back(-normal.x() * d * 0.5,
+                        -normal.y() * d * 0.5,
+                        -normal.z() * d * 0.5);
+            gp_Trsf trsf;
+            trsf.SetTranslation(back);
+            BRepBuilderAPI_Transform mover(face, trsf, true);
+            BRepPrimAPI_MakePrism prism(mover.Shape(),
+                                        gp_Vec(normal.x() * d,
+                                               normal.y() * d,
+                                               normal.z() * d));
+            if (!prism.IsDone()) {
+                result.errorMsg = QString("%1 failed (symmetric)").arg(failureContext);
+                return result;
+            }
+            result.shape = prism.Shape();
+        } else {
+            gp_Vec vec(normal.x() * d, normal.y() * d, normal.z() * d);
+            BRepPrimAPI_MakePrism prism(face, vec);
+            if (!prism.IsDone()) {
+                result.errorMsg = failureContext;
+                return result;
+            }
+            result.shape = prism.Shape();
+        }
+
+        BRepCheck_Analyzer check(result.shape);
+        if (!check.IsValid()) {
+            result.errorMsg = "Extruded shape is invalid (topology error)";
+            result.shape = TopoDS_Shape();
+            return result;
+        }
+
+        result.success = true;
+    } catch (const Standard_Failure& e) {
+        result.errorMsg = QString("OCCT exception: %1").arg(e.GetMessageString());
+    }
+
+    return result;
+}
 
 ExtrudeResult ExtrudeOperation::extrude(const Sketch& sketch,
                                          const ExtrudeParams& params)
@@ -51,60 +102,115 @@ ExtrudeResult ExtrudeOperation::extrude(const Sketch& sketch,
     LOG_DEBUG("Extrude: plane='{}' normal=({:.3f},{:.3f},{:.3f}) distance={:.4f}",
               plane.name().toStdString(), n.x(), n.y(), n.z(), d);
 
-    try {
-        if (params.symmetric) {
-            // Translate face back by d/2, then extrude by d
-            gp_Vec back(-n.x() * d * 0.5,
-                        -n.y() * d * 0.5,
-                        -n.z() * d * 0.5);
-            gp_Trsf trsf;
-            trsf.SetTranslation(back);
-            BRepBuilderAPI_Transform mover(wire.face, trsf, true);
-            BRepPrimAPI_MakePrism prism(mover.Shape(),
-                gp_Vec(n.x() * d, n.y() * d, n.z() * d));
-            if (!prism.IsDone()) {
-                result.errorMsg = "BRepPrimAPI_MakePrism failed (symmetric)";
-                LOG_ERROR("Extrude (symmetric) failed — BRepPrimAPI_MakePrism::IsDone() "
-                          "returned false — distance={:.4f} normal=({:.3f},{:.3f},{:.3f})",
-                          d, n.x(), n.y(), n.z());
-                return result;
-            }
-            result.shape   = prism.Shape();
-        } else {
-            gp_Vec vec(n.x() * d, n.y() * d, n.z() * d);
-            BRepPrimAPI_MakePrism prism(wire.face, vec);
-            if (!prism.IsDone()) {
-                result.errorMsg = "BRepPrimAPI_MakePrism failed";
-                LOG_ERROR("Extrude failed — BRepPrimAPI_MakePrism::IsDone() returned false "
-                          "— distance={:.4f} normal=({:.3f},{:.3f},{:.3f})",
-                          d, n.x(), n.y(), n.z());
-                return result;
-            }
-            result.shape = prism.Shape();
-        }
-
-        BRepCheck_Analyzer check(result.shape);
-        if (!check.IsValid()) {
-            result.errorMsg = "Extruded shape is invalid (topology error)";
-            LOG_ERROR("Extrude failed — BRepCheck_Analyzer reports INVALID topology on "
-                      "extruded shape — distance={:.4f} symmetric={} — the profile face "
-                      "may have self-intersections or near-zero-length edges",
-                      d, params.symmetric);
-            result.shape = TopoDS_Shape();
-            return result;
-        }
-
-        result.success = true;
+    result = extrudeFaceAlongNormal(wire.face, n, params, "BRepPrimAPI_MakePrism failed");
+    if (result.success) {
         LOG_INFO("Extrude succeeded — distance={:.4f} symmetric={} mode={}",
                  d, params.symmetric, params.mode);
-    } catch (const Standard_Failure& e) {
-        result.errorMsg = QString("OCCT exception: %1").arg(e.GetMessageString());
-        LOG_ERROR("Extrude threw OCCT exception: '{}' — distance={:.4f} "
+    } else if (!result.errorMsg.isEmpty()) {
+        LOG_ERROR("Extrude failed: '{}' — distance={:.4f} "
                   "symmetric={} normal=({:.3f},{:.3f},{:.3f}) entities={}",
-                  e.GetMessageString(), d, params.symmetric,
+                  result.errorMsg.toStdString(), d, params.symmetric,
                   n.x(), n.y(), n.z(), sketch.entities().size());
     }
 
+    return result;
+}
+
+ExtrudeBatchResult ExtrudeOperation::extrudeProfiles(
+    const std::vector<SelectedSketchProfile>& profiles,
+    const ExtrudeParams& params,
+    const TopoDS_Shape* targetShape)
+{
+    ExtrudeBatchResult result;
+
+    if (profiles.empty()) {
+        result.errorMsg = "Select at least one sketch face to extrude.";
+        LOG_WARN("ExtrudeOperation::extrudeProfiles: empty profile selection");
+        return result;
+    }
+
+    if (qFuzzyIsNull(params.distance)) {
+        result.errorMsg = "Extrude distance must be non-zero.";
+        LOG_WARN("ExtrudeOperation::extrudeProfiles: zero-distance extrude rejected");
+        return result;
+    }
+
+    if (params.mode != 0 && (!targetShape || targetShape->IsNull())) {
+        result.errorMsg = "Select a target body for Add/Remove extrude.";
+        LOG_WARN("ExtrudeOperation::extrudeProfiles: missing target body for boolean mode {}",
+                 params.mode);
+        return result;
+    }
+
+    TopoDS_Shape workingTarget;
+    if (params.mode != 0)
+        workingTarget = *targetShape;
+
+    result.solids.reserve(profiles.size());
+
+    for (const auto& profile : profiles) {
+        LOG_DEBUG("ExtrudeOperation::extrudeProfiles: processing loop {} with {} entities",
+                  profile.loopIndex, profile.sourceEntityIds.size());
+
+        if (!profile.isClosed) {
+            result.errorMsg = QString("Selected sketch face %1 is not closed.").arg(profile.loopIndex);
+            LOG_WARN("ExtrudeOperation::extrudeProfiles: profile {} marked open", profile.loopIndex);
+            return result;
+        }
+
+        SketchToWireResult faceResult = SketchToWire::buildFaceForProfile(profile);
+        if (!faceResult.success || faceResult.face.IsNull()) {
+            result.errorMsg = faceResult.errorMsg.isEmpty()
+                ? QString("Selected sketch face %1 could not be converted to a face.")
+                      .arg(profile.loopIndex)
+                : faceResult.errorMsg;
+            LOG_WARN("ExtrudeOperation::extrudeProfiles: face build failed for loop {}: {}",
+                     profile.loopIndex, result.errorMsg.toStdString());
+            return result;
+        }
+
+        ExtrudeResult solidResult = extrudeFaceAlongNormal(faceResult.face,
+                                                           profile.plane.normal(),
+                                                           params,
+                                                           "BRepPrimAPI_MakePrism failed");
+        if (!solidResult.success || solidResult.shape.IsNull()) {
+            result.errorMsg = solidResult.errorMsg.isEmpty()
+                ? QString("Selected sketch face %1 could not be extruded.").arg(profile.loopIndex)
+                : solidResult.errorMsg;
+            LOG_WARN("ExtrudeOperation::extrudeProfiles: prism failed for loop {}: {}",
+                     profile.loopIndex, result.errorMsg.toStdString());
+            return result;
+        }
+
+        result.solids.push_back(solidResult.shape);
+
+        if (params.mode == 1) {
+            ExtrudeResult boolResult = booleanAdd(workingTarget, solidResult.shape);
+            if (!boolResult.success) {
+                result.errorMsg = boolResult.errorMsg;
+                LOG_WARN("ExtrudeOperation::extrudeProfiles: boolean add failed for loop {}: {}",
+                         profile.loopIndex, result.errorMsg.toStdString());
+                return result;
+            }
+            workingTarget = boolResult.shape;
+        } else if (params.mode == 2) {
+            ExtrudeResult boolResult = booleanCut(workingTarget, solidResult.shape);
+            if (!boolResult.success) {
+                result.errorMsg = boolResult.errorMsg;
+                LOG_WARN("ExtrudeOperation::extrudeProfiles: boolean cut failed for loop {}: {}",
+                         profile.loopIndex, result.errorMsg.toStdString());
+                return result;
+            }
+            workingTarget = boolResult.shape;
+        }
+    }
+
+    if (params.mode != 0)
+        result.finalTargetShape = workingTarget;
+
+    result.success = true;
+    LOG_DEBUG("ExtrudeOperation::extrudeProfiles: batch succeeded with {} solids",
+              result.solids.size());
     return result;
 }
 
@@ -157,40 +263,16 @@ ExtrudeResult ExtrudeOperation::extrudeFace(const TopoDS_Face& face, const Extru
             n /= len;
         }
 
-        double d = params.distance;
-        if (params.symmetric) {
-            gp_Vec back(-n.X() * d * 0.5, -n.Y() * d * 0.5, -n.Z() * d * 0.5);
-            gp_Trsf trsf;
-            trsf.SetTranslation(back);
-            BRepBuilderAPI_Transform mover(face, trsf, true);
-            BRepPrimAPI_MakePrism prism(mover.Shape(), gp_Vec(n.X() * d, n.Y() * d, n.Z() * d));
-            if (!prism.IsDone()) {
-                result.errorMsg = "BRepPrimAPI_MakePrism failed (extrudeFace symmetric)";
-                LOG_ERROR("extrudeFace (symmetric) failed — prism::IsDone returned false");
-                return result;
-            }
-            result.shape = prism.Shape();
+        result = extrudeFaceAlongNormal(face,
+                                        QVector3D(n.X(), n.Y(), n.Z()),
+                                        params,
+                                        "BRepPrimAPI_MakePrism failed (extrudeFace)");
+        if (result.success) {
+            LOG_INFO("extrudeFace succeeded — distance={:.4f} symmetric={}",
+                     params.distance, params.symmetric);
         } else {
-            gp_Vec vec(n.X() * d, n.Y() * d, n.Z() * d);
-            BRepPrimAPI_MakePrism prism(face, vec);
-            if (!prism.IsDone()) {
-                result.errorMsg = "BRepPrimAPI_MakePrism failed (extrudeFace)";
-                LOG_ERROR("extrudeFace failed — prism::IsDone returned false");
-                return result;
-            }
-            result.shape = prism.Shape();
+            LOG_ERROR("extrudeFace failed: {}", result.errorMsg.toStdString());
         }
-
-        BRepCheck_Analyzer check(result.shape);
-        if (!check.IsValid()) {
-            result.errorMsg = "Extruded shape is invalid (topology error)";
-            LOG_ERROR("extrudeFace failed — BRepCheck_Analyzer reports invalid topology");
-            result.shape = TopoDS_Shape();
-            return result;
-        }
-
-        result.success = true;
-        LOG_INFO("extrudeFace succeeded — distance={:.4f} symmetric={}", d, params.symmetric);
     } catch (const Standard_Failure& e) {
         result.errorMsg = QString("OCCT exception: %1").arg(e.GetMessageString());
         LOG_ERROR("extrudeFace threw OCCT exception: '{}'", e.GetMessageString());
