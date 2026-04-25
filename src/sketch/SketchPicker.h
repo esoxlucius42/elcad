@@ -48,9 +48,22 @@ public:
         std::vector<quint64>   entityIds;  // participating line entity IDs
     };
 
+    struct DerivedLoopTopology {
+        int                    loopIndex{-1};
+        std::vector<QVector2D> polygon;
+        std::vector<quint64>   entityIds;
+        float                  signedArea{0.0f};
+        std::optional<int>     parentLoopIndex;
+        std::vector<int>       childLoopIndices;
+        int                    nestingDepth{0};
+    };
+
     // Detect all minimal bounded faces in the planar arrangement of the sketch's
     // line segments (uses flattenSegments internally).
     static std::vector<Loop> findClosedLoops(const Sketch& sketch, float snapTol = 0.5f);
+
+    static std::vector<DerivedLoopTopology> buildLoopTopology(const Sketch& sketch,
+                                                              float snapTol = 0.5f);
 
     static std::vector<SelectedSketchProfile> resolveSelectedProfiles(
         const Sketch& sketch,
@@ -59,6 +72,10 @@ public:
 
     // Ray-casting point-in-polygon test (handles convex and concave polygons).
     static bool pointInPolygon(QVector2D pt, const std::vector<QVector2D>& poly);
+    static bool loopContainsPoint(const DerivedLoopTopology& loop, QVector2D pt);
+    static bool selectableLoopContainsPoint(const std::vector<DerivedLoopTopology>& topology,
+                                            int loopIndex,
+                                            QVector2D pt);
 };
 
 } // namespace elcad

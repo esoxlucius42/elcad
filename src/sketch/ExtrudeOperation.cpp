@@ -149,8 +149,8 @@ ExtrudeBatchResult ExtrudeOperation::extrudeProfiles(
     result.solids.reserve(profiles.size());
 
     for (const auto& profile : profiles) {
-        LOG_DEBUG("ExtrudeOperation::extrudeProfiles: processing loop {} with {} entities",
-                  profile.loopIndex, profile.sourceEntityIds.size());
+        LOG_DEBUG("ExtrudeOperation::extrudeProfiles: processing loop {} with {} entities and {} holes",
+                  profile.loopIndex, profile.sourceEntityIds.size(), profile.holes.size());
 
         if (!profile.isClosed) {
             result.errorMsg = QString("Selected sketch face %1 is not closed.").arg(profile.loopIndex);

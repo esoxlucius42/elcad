@@ -588,9 +588,10 @@ void MainWindow::onExtrude()
                 LOG_WARN("Extrude: selected sketch faces could not be resolved: {}",
                          selectionError.toStdString());
                 QMessageBox::warning(this,
-                                     "Extrude",
+                                     "Extrude Selection Invalid",
                                      selectionError.isEmpty()
-                                         ? "Selected sketch faces could not be resolved for extrusion."
+                                         ? "Selected sketch faces could not be resolved for extrusion.\n"
+                                           "Select a closed material region outside any hole boundaries."
                                          : selectionError);
                 return;
             }
