@@ -96,7 +96,7 @@ Operations that can fail return a result struct with a `bool success` and `QStri
 - The user decides when and what to commit. Agents may stage files (`git add`) or show diffs to help the user review changes, but must stop short of committing.
 
 <!-- SPECKIT START -->
-Current implementation plan: `specs/002-fix-multi-shape-extrude/plan.md`
+Current implementation plan: `specs/003-fix-sketch-hole-selection/plan.md`
 
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan.

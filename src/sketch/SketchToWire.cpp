@@ -19,6 +19,7 @@
 #include <gp_Ax2.hxx>
 #include <Geom_TrimmedCurve.hxx>
 #include <ShapeFix_Wire.hxx>
+#include <ShapeFix_Face.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopoDS_Face.hxx>
 #include <BRepAlgo_NormalProjection.hxx>
@@ -183,16 +184,69 @@ SketchToWireResult SketchToWire::convert(const Sketch& sketch)
 
 SketchToWireResult SketchToWire::buildFaceForProfile(const SelectedSketchProfile& profile)
 {
-    return buildWireFromEntities(profile.sourceEntities,
-                                 profile.plane,
-                                 true,
-                                 QString("Selected sketch face %1 has no usable boundary geometry.")
-                                     .arg(profile.loopIndex),
-                                 QString("Selected sketch face %1 could not be connected into a closed wire.")
-                                     .arg(profile.loopIndex),
-                                 QString("Selected sketch face %1 is not a closed loop.")
-                                     .arg(profile.loopIndex),
-                                 "SketchToWire::buildFaceForProfile");
+    SketchToWireResult result = buildWireFromEntities(profile.sourceEntities,
+                                                      profile.plane,
+                                                      true,
+                                                      QString("Selected sketch face %1 has no usable boundary geometry.")
+                                                          .arg(profile.loopIndex),
+                                                      QString("Selected sketch face %1 could not be connected into a closed wire.")
+                                                          .arg(profile.loopIndex),
+                                                      QString("Selected sketch face %1 is not a closed loop.")
+                                                          .arg(profile.loopIndex),
+                                                      "SketchToWire::buildFaceForProfile");
+    if (!result.success || result.face.IsNull() || profile.holes.empty())
+        return result;
+
+    BRepBuilderAPI_MakeFace faceMaker(result.wire, /*OnlyPlane=*/true);
+    if (!faceMaker.IsDone()) {
+        result.success = false;
+        result.errorMsg =
+            QString("Selected sketch face %1 could not initialize a planar face.")
+                .arg(profile.loopIndex);
+        return result;
+    }
+
+    for (const auto& hole : profile.holes) {
+        SketchToWireResult holeResult = buildWireFromEntities(
+            hole.entities,
+            profile.plane,
+            true,
+            QString("Selected sketch hole %1 for face %2 has no usable boundary geometry.")
+                .arg(hole.holeLoopIndex)
+                .arg(profile.loopIndex),
+            QString("Selected sketch hole %1 for face %2 could not be connected into a closed wire.")
+                .arg(hole.holeLoopIndex)
+                .arg(profile.loopIndex),
+            QString("Selected sketch hole %1 for face %2 is not a closed loop.")
+                .arg(hole.holeLoopIndex)
+                .arg(profile.loopIndex),
+            "SketchToWire::buildFaceForProfile::hole");
+        if (!holeResult.success || holeResult.wire.IsNull()) {
+            holeResult.success = false;
+            return holeResult;
+        }
+
+        faceMaker.Add(holeResult.wire);
+    }
+
+    if (!faceMaker.IsDone()) {
+        result.success = false;
+        result.errorMsg =
+            QString("Selected sketch face %1 could not include all hole boundaries.")
+                .arg(profile.loopIndex);
+        return result;
+    }
+
+    ShapeFix_Face fixer(faceMaker.Face());
+    fixer.Perform();
+    result.face = fixer.Face();
+    result.success = !result.face.IsNull();
+    if (!result.success) {
+        result.errorMsg =
+            QString("Selected sketch face %1 produced an invalid face after applying hole boundaries.")
+                .arg(profile.loopIndex);
+    }
+    return result;
 }
 
 } // namespace elcad

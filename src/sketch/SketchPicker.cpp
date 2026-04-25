@@ -5,6 +5,7 @@
 #include <QtMath>
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace elcad {
 
@@ -48,6 +49,23 @@ static float pointArcDist(QVector2D p, QVector2D center, float r,
     QVector2D ep0 = center + QVector2D(r * qCos(a0r), r * qSin(a0r));
     QVector2D ep1 = center + QVector2D(r * qCos(a1r), r * qSin(a1r));
     return qMin((p - ep0).length(), (p - ep1).length());
+}
+
+static float signedPolygonArea(const std::vector<QVector2D>& poly)
+{
+    float area = 0.0f;
+    const int n = static_cast<int>(poly.size());
+    for (int i = 0; i < n; ++i) {
+        const QVector2D a = poly[i];
+        const QVector2D b = poly[(i + 1) % n];
+        area += a.x() * b.y() - b.x() * a.y();
+    }
+    return area * 0.5f;
+}
+
+static float polygonArea(const std::vector<QVector2D>& poly)
+{
+    return std::abs(signedPolygonArea(poly));
 }
 
 // ── SketchPicker::pick ────────────────────────────────────────────────────────
@@ -177,21 +195,16 @@ SketchHit SketchPicker::pick(const QVector3D& rayOrigin,
         // priority over the enclosing rectangle, and a split-circle half gets
         // priority over any larger enclosing region.
         if (bestPriority < 1) {
-            auto  loops      = findClosedLoops(sketch);
+            auto  loopTopology = buildLoopTopology(sketch);
             int   bestLoop   = -1;
             float bestArea   = std::numeric_limits<float>::max();
-            for (int i = 0; i < static_cast<int>(loops.size()); ++i) {
-                if (!pointInPolygon(hit2d, loops[i].polygon)) continue;
-                // Compute signed area (positive = CCW = bounded face).
-                float area = 0.f;
-                int   n    = static_cast<int>(loops[i].polygon.size());
-                for (int k = 0; k < n; ++k) {
-                    QVector2D a = loops[i].polygon[k];
-                    QVector2D b = loops[i].polygon[(k + 1) % n];
-                    area += a.x() * b.y() - b.x() * a.y();
+            for (int i = 0; i < static_cast<int>(loopTopology.size()); ++i) {
+                if (!selectableLoopContainsPoint(loopTopology, i, hit2d)) continue;
+                const float area = polygonArea(loopTopology[i].polygon);
+                if (area < bestArea) {
+                    bestArea = area;
+                    bestLoop = i;
                 }
-                area = std::abs(area) * 0.5f;
-                if (area < bestArea) { bestArea = area; bestLoop = i; }
             }
             if (bestLoop >= 0 && bestPriority < 0) {
                 Document::SelectedItem item;
@@ -516,6 +529,71 @@ std::vector<SketchPicker::Loop> SketchPicker::findClosedLoops(const Sketch& sket
     return result;
 }
 
+std::vector<SketchPicker::DerivedLoopTopology> SketchPicker::buildLoopTopology(const Sketch& sketch,
+                                                                               float snapTol)
+{
+    const auto loops = findClosedLoops(sketch, snapTol);
+
+    std::vector<DerivedLoopTopology> topology;
+    topology.reserve(loops.size());
+
+    for (int i = 0; i < static_cast<int>(loops.size()); ++i) {
+        DerivedLoopTopology derived;
+        derived.loopIndex = i;
+        derived.polygon = loops[i].polygon;
+        derived.entityIds = loops[i].entityIds;
+        derived.signedArea = signedPolygonArea(loops[i].polygon);
+        topology.push_back(std::move(derived));
+    }
+
+    const float kAreaEpsilon = 1e-4f;
+    for (int i = 0; i < static_cast<int>(topology.size()); ++i) {
+        if (topology[i].polygon.empty())
+            continue;
+
+        const QVector2D samplePoint = topology[i].polygon.front();
+        float bestParentArea = std::numeric_limits<float>::max();
+
+        for (int j = 0; j < static_cast<int>(topology.size()); ++j) {
+            if (i == j || topology[j].polygon.empty())
+                continue;
+
+            const float candidateArea = polygonArea(topology[j].polygon);
+            const float loopArea = polygonArea(topology[i].polygon);
+            if (candidateArea <= loopArea + kAreaEpsilon)
+                continue;
+            if (!pointInPolygon(samplePoint, topology[j].polygon))
+                continue;
+
+            if (candidateArea < bestParentArea) {
+                bestParentArea = candidateArea;
+                topology[i].parentLoopIndex = j;
+            }
+        }
+    }
+
+    for (auto& loop : topology)
+        loop.childLoopIndices.clear();
+
+    for (int i = 0; i < static_cast<int>(topology.size()); ++i) {
+        if (!topology[i].parentLoopIndex.has_value())
+            continue;
+        topology[*topology[i].parentLoopIndex].childLoopIndices.push_back(i);
+    }
+
+    for (int i = 0; i < static_cast<int>(topology.size()); ++i) {
+        int depth = 0;
+        std::optional<int> parent = topology[i].parentLoopIndex;
+        while (parent.has_value()) {
+            ++depth;
+            parent = topology[*parent].parentLoopIndex;
+        }
+        topology[i].nestingDepth = depth;
+    }
+
+    return topology;
+}
+
 std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
     const Sketch& sketch,
     const SketchFaceSelection& selection,
@@ -539,26 +617,67 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
         return {};
     }
 
-    const auto loops = findClosedLoops(sketch);
+    const auto topology = buildLoopTopology(sketch);
     std::vector<SelectedSketchProfile> profiles;
     profiles.reserve(selection.loopIndices.size());
 
+    auto appendLoopEntities =
+        [&](const DerivedLoopTopology& loop,
+            std::vector<quint64>& entityIds,
+            std::vector<SketchEntity>& entities,
+            int ownerLoopIndex) -> bool
+    {
+        for (quint64 entityId : loop.entityIds) {
+            if (std::find(entityIds.begin(), entityIds.end(), entityId) != entityIds.end()) {
+                LOG_DEBUG("SketchPicker::resolveSelectedProfiles: ignoring duplicate entity {} for loop {}",
+                          entityId, ownerLoopIndex);
+                continue;
+            }
+
+            const SketchEntity* entity = sketch.entityById(entityId);
+            if (!entity || entity->construction) {
+                if (errorMsg) {
+                    *errorMsg = QString("Selected sketch face %1 references invalid geometry.")
+                                    .arg(ownerLoopIndex);
+                }
+                LOG_WARN("SketchPicker::resolveSelectedProfiles: entity {} missing or construction for loop {}",
+                         entityId, ownerLoopIndex);
+                return false;
+            }
+
+            entityIds.push_back(entityId);
+            entities.push_back(*entity);
+        }
+
+        return true;
+    };
+
     for (int loopIndex : selection.loopIndices) {
-        if (loopIndex < 0 || loopIndex >= static_cast<int>(loops.size())) {
+        if (loopIndex < 0 || loopIndex >= static_cast<int>(topology.size())) {
             if (errorMsg)
                 *errorMsg = QString("Selected sketch face %1 could not be resolved.")
                                 .arg(loopIndex);
             LOG_WARN("SketchPicker::resolveSelectedProfiles: loop index {} out of range (loop count={})",
-                     loopIndex, loops.size());
+                     loopIndex, topology.size());
             return {};
         }
 
-        const auto& loop = loops[loopIndex];
+        const auto& loop = topology[loopIndex];
         if (loop.polygon.size() < 3) {
             if (errorMsg)
                 *errorMsg = QString("Selected sketch face %1 is degenerate.").arg(loopIndex);
             LOG_WARN("SketchPicker::resolveSelectedProfiles: loop {} has only {} polygon points",
                      loopIndex, loop.polygon.size());
+            return {};
+        }
+        if ((loop.nestingDepth % 2) != 0) {
+            if (errorMsg) {
+                *errorMsg = QString("Selected sketch face %1 is a hole, not a bounded face. "
+                                    "Click the material area outside the hole boundary.")
+                                .arg(loopIndex);
+            }
+            LOG_WARN("SketchPicker::resolveSelectedProfiles: loop {} is nested at odd depth {}",
+                     loopIndex, loop.nestingDepth);
             return {};
         }
 
@@ -569,27 +688,11 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
         profile.polygon = loop.polygon;
         profile.isClosed = true;
 
-        for (quint64 entityId : loop.entityIds) {
-            if (std::find(profile.sourceEntityIds.begin(),
-                          profile.sourceEntityIds.end(),
-                          entityId) != profile.sourceEntityIds.end()) {
-                LOG_DEBUG("SketchPicker::resolveSelectedProfiles: ignoring duplicate entity {} for loop {}",
-                          entityId, loopIndex);
-                continue;
-            }
-
-            const SketchEntity* entity = sketch.entityById(entityId);
-            if (!entity || entity->construction) {
-                if (errorMsg)
-                    *errorMsg = QString("Selected sketch face %1 references invalid geometry.")
-                                    .arg(loopIndex);
-                LOG_WARN("SketchPicker::resolveSelectedProfiles: entity {} missing or construction for loop {}",
-                         entityId, loopIndex);
-                return {};
-            }
-
-            profile.sourceEntityIds.push_back(entityId);
-            profile.sourceEntities.push_back(*entity);
+        if (!appendLoopEntities(loop,
+                                profile.sourceEntityIds,
+                                profile.sourceEntities,
+                                loopIndex)) {
+            return {};
         }
 
         if (profile.sourceEntities.empty()) {
@@ -599,6 +702,44 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
             LOG_WARN("SketchPicker::resolveSelectedProfiles: loop {} resolved no source entities",
                      loopIndex);
             return {};
+        }
+
+        for (int childLoopIndex : loop.childLoopIndices) {
+            if (childLoopIndex < 0 || childLoopIndex >= static_cast<int>(topology.size()))
+                continue;
+
+            const auto& childLoop = topology[childLoopIndex];
+            if (childLoop.polygon.size() < 3) {
+                if (errorMsg) {
+                    *errorMsg = QString("Selected sketch face %1 contains a degenerate hole boundary.")
+                                    .arg(loopIndex);
+                }
+                LOG_WARN("SketchPicker::resolveSelectedProfiles: child loop {} for parent {} has only {} polygon points",
+                         childLoopIndex, loopIndex, childLoop.polygon.size());
+                return {};
+            }
+
+            HoleBoundary hole;
+            hole.holeLoopIndex = childLoopIndex;
+            hole.polygon = childLoop.polygon;
+            if (!appendLoopEntities(childLoop,
+                                    hole.entityIds,
+                                    hole.entities,
+                                    loopIndex)) {
+                return {};
+            }
+
+            if (hole.entities.empty()) {
+                if (errorMsg) {
+                    *errorMsg = QString("Selected sketch face %1 contains a hole with no usable boundary geometry.")
+                                    .arg(loopIndex);
+                }
+                LOG_WARN("SketchPicker::resolveSelectedProfiles: child loop {} for parent {} resolved no source entities",
+                         childLoopIndex, loopIndex);
+                return {};
+            }
+
+            profile.holes.push_back(std::move(hole));
         }
 
         profiles.push_back(std::move(profile));
@@ -629,6 +770,34 @@ bool SketchPicker::pointInPolygon(QVector2D pt, const std::vector<QVector2D>& po
         }
     }
     return (crossings % 2) == 1;
+}
+
+bool SketchPicker::loopContainsPoint(const DerivedLoopTopology& loop, QVector2D pt)
+{
+    return pointInPolygon(pt, loop.polygon);
+}
+
+bool SketchPicker::selectableLoopContainsPoint(const std::vector<DerivedLoopTopology>& topology,
+                                               int loopIndex,
+                                               QVector2D pt)
+{
+    if (loopIndex < 0 || loopIndex >= static_cast<int>(topology.size()))
+        return false;
+
+    const auto& loop = topology[loopIndex];
+    if ((loop.nestingDepth % 2) != 0)
+        return false;
+    if (!loopContainsPoint(loop, pt))
+        return false;
+
+    for (int childLoopIndex : loop.childLoopIndices) {
+        if (childLoopIndex < 0 || childLoopIndex >= static_cast<int>(topology.size()))
+            continue;
+        if (loopContainsPoint(topology[childLoopIndex], pt))
+            return false;
+    }
+
+    return true;
 }
 
 } // namespace elcad

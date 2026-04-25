@@ -1,5 +1,7 @@
 # Build directories
 build/
+bin/
+obj/
 out/
 
 # CMake
@@ -16,6 +18,7 @@ _deps/
 *.a
 *.so
 *.so.*
+*.dll
 *.dylib
 *.exe
 *.out
@@ -33,6 +36,7 @@ ui_*.h
 .idea/
 *.swp
 *.swo
+*.tmp
 *~
 .DS_Store
 Thumbs.db
