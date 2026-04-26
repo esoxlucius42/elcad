@@ -192,6 +192,28 @@ std::optional<SketchFaceSelection> Document::selectedSketchFaces(quint64 sketchI
     return selection;
 }
 
+void Document::clearSketchSelection(quint64 sketchId)
+{
+    if (sketchId == 0)
+        return;
+
+    if (m_activeSketch && m_activeSketch->id() == sketchId)
+        m_activeSketch->clearSelection();
+    if (Sketch* sketch = sketchById(sketchId))
+        sketch->clearSelection();
+
+    auto it = std::remove_if(m_selection.begin(),
+                             m_selection.end(),
+                             [sketchId](const SelectedItem& item) {
+                                 return item.sketchId == sketchId;
+                             });
+    if (it == m_selection.end())
+        return;
+
+    m_selection.erase(it, m_selection.end());
+    emit selectionChanged();
+}
+
 Body* Document::singleSelectedBody() const
 {
     Body* found = nullptr;
@@ -232,6 +254,7 @@ void Document::reactivateSketch(Sketch* sketch)
         LOG_WARN("Document::reactivateSketch: sketch not found in completed list");
         return;
     }
+    clearSketchSelection((*it)->id());
     // Push any currently active sketch back to the completed list.
     if (m_activeSketch) {
         m_sketches.push_back(std::move(m_activeSketch));
@@ -258,15 +281,8 @@ void Document::setSketchVisible(quint64 id, bool visible)
 {
     if (Sketch* s = sketchById(id)) {
         s->setVisible(visible);
-        if (!visible) {
-            s->clearSelection();
-            auto it = std::remove_if(m_selection.begin(), m_selection.end(),
-                [id](const SelectedItem& si) { return si.sketchId == id; });
-            if (it != m_selection.end()) {
-                m_selection.erase(it, m_selection.end());
-                emit selectionChanged();
-            }
-        }
+        if (!visible)
+            clearSketchSelection(id);
         emit sketchVisibilityChanged(s);
     }
 }

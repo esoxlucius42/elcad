@@ -68,6 +68,74 @@ static float polygonArea(const std::vector<QVector2D>& poly)
     return std::abs(signedPolygonArea(poly));
 }
 
+static bool pointsAlmostEqual(QVector2D a, QVector2D b, float tol)
+{
+    return (a - b).lengthSquared() <= tol * tol;
+}
+
+static bool sameBoundaryGeometry(const SketchBoundarySegment& lhs,
+                                 const SketchBoundarySegment& rhs,
+                                 float tolerance)
+{
+    if (lhs.type != rhs.type)
+        return false;
+
+    const bool sameDirection =
+        pointsAlmostEqual(lhs.start, rhs.start, tolerance) &&
+        pointsAlmostEqual(lhs.end, rhs.end, tolerance);
+    const bool reversedDirection =
+        pointsAlmostEqual(lhs.start, rhs.end, tolerance) &&
+        pointsAlmostEqual(lhs.end, rhs.start, tolerance);
+    if (!sameDirection && !reversedDirection)
+        return false;
+
+    if (lhs.type == SketchEntity::Arc) {
+        return pointsAlmostEqual(lhs.center, rhs.center, tolerance) &&
+               std::abs(lhs.radius - rhs.radius) <= tolerance;
+    }
+
+    return true;
+}
+
+static SketchBoundarySegment makeLineBoundary(QVector2D start,
+                                              QVector2D end,
+                                              quint64 sourceEntityId)
+{
+    SketchBoundarySegment boundary;
+    boundary.type = SketchEntity::Line;
+    boundary.sourceEntityId = sourceEntityId;
+    boundary.start = start;
+    boundary.end = end;
+    return boundary;
+}
+
+static SketchBoundarySegment makeArcBoundary(QVector2D center,
+                                             float radius,
+                                             QVector2D start,
+                                             QVector2D end,
+                                             quint64 sourceEntityId,
+                                             bool counterClockwise)
+{
+    SketchBoundarySegment boundary;
+    boundary.type = SketchEntity::Arc;
+    boundary.sourceEntityId = sourceEntityId;
+    boundary.start = start;
+    boundary.end = end;
+    boundary.center = center;
+    boundary.radius = radius;
+    boundary.counterClockwise = counterClockwise;
+    return boundary;
+}
+
+static SketchBoundarySegment reverseBoundary(const SketchBoundarySegment& boundary)
+{
+    SketchBoundarySegment reversed = boundary;
+    std::swap(reversed.start, reversed.end);
+    if (reversed.type == SketchEntity::Arc)
+        reversed.counterClockwise = !reversed.counterClockwise;
+    return reversed;
+}
+
 // ── SketchPicker::pick ────────────────────────────────────────────────────────
 
 SketchHit SketchPicker::pick(const QVector3D& rayOrigin,
@@ -351,10 +419,14 @@ std::vector<SketchPicker::FlatSeg> SketchPicker::flattenSegments(const Sketch& s
                              [](float x, float y){ return std::abs(x - y) < 1e-6f; }),
                  tv.end());
         QVector2D ab = lines[i].b - lines[i].a;
-        for (int k = 0; k + 1 < static_cast<int>(tv.size()); ++k)
-            result.push_back({lines[i].a + ab * tv[k],
-                              lines[i].a + ab * tv[k + 1],
-                              lines[i].entityId});
+        for (int k = 0; k + 1 < static_cast<int>(tv.size()); ++k) {
+            const QVector2D start = lines[i].a + ab * tv[k];
+            const QVector2D end = lines[i].a + ab * tv[k + 1];
+            result.push_back({start,
+                              end,
+                              lines[i].entityId,
+                              makeLineBoundary(start, end, lines[i].entityId)});
+        }
     }
 
     // Circles / Arcs — polygon approximation with extra vertices at intersections
@@ -385,10 +457,22 @@ std::vector<SketchPicker::FlatSeg> SketchPicker::flattenSegments(const Sketch& s
             return C.center + QVector2D(C.r * std::cos(rad), C.r * std::sin(rad));
         };
 
-        for (int k = 0; k + 1 < static_cast<int>(angles.size()); ++k)
-            result.push_back({ptAt(angles[k]), ptAt(angles[k + 1]), C.entityId});
-        if (full)  // close the loop
-            result.push_back({ptAt(angles.back()), ptAt(angles.front()), C.entityId});
+        for (int k = 0; k + 1 < static_cast<int>(angles.size()); ++k) {
+            const QVector2D start = ptAt(angles[k]);
+            const QVector2D end = ptAt(angles[k + 1]);
+            result.push_back({start,
+                              end,
+                              C.entityId,
+                              makeArcBoundary(C.center, C.r, start, end, C.entityId, true)});
+        }
+        if (full) { // close the loop
+            const QVector2D start = ptAt(angles.back());
+            const QVector2D end = ptAt(angles.front());
+            result.push_back({start,
+                              end,
+                              C.entityId,
+                              makeArcBoundary(C.center, C.r, start, end, C.entityId, true)});
+        }
     }
 
     return result;
@@ -427,14 +511,31 @@ std::vector<SketchPicker::Loop> SketchPicker::findClosedLoops(const Sketch& sket
         return static_cast<int>(nodes.size()) - 1;
     };
 
-    struct UEdge { int a, b; quint64 entityId; };
+    struct UEdge {
+        int a, b;
+        quint64 entityId;
+        SketchBoundarySegment boundary;
+    };
     std::vector<UEdge> uedges;
     uedges.reserve(segs.size());
     for (const auto& s : segs) {
         int na = nodeOf(s.a);
         int nb = nodeOf(s.b);
-        if (na != nb)
-            uedges.push_back({na, nb, s.entityId});
+        bool duplicateEdge = false;
+        for (const auto& existing : uedges) {
+            const bool sameNodes =
+                (existing.a == na && existing.b == nb) ||
+                (existing.a == nb && existing.b == na);
+            if (!sameNodes)
+                continue;
+            if (sameBoundaryGeometry(existing.boundary, s.boundary, snapTol * 0.5f)) {
+                duplicateEdge = true;
+                break;
+            }
+        }
+
+        if (na != nb && !duplicateEdge)
+            uedges.push_back({na, nb, s.entityId, s.boundary});
     }
 
     int N = static_cast<int>(nodes.size());
@@ -448,14 +549,15 @@ std::vector<SketchPicker::Loop> SketchPicker::findClosedLoops(const Sketch& sket
     struct HalfEdge {
         int     from, to;
         quint64 entityId;
+        SketchBoundarySegment boundary;
         int     next{-1};
         bool    visited{false};
     };
     std::vector<HalfEdge> he;
     he.reserve(2 * E);
     for (const auto& e : uedges) {
-        he.push_back({e.a, e.b, e.entityId});   // 2i
-        he.push_back({e.b, e.a, e.entityId});   // 2i+1
+        he.push_back({e.a, e.b, e.entityId, e.boundary});                  // 2i
+        he.push_back({e.b, e.a, e.entityId, reverseBoundary(e.boundary)}); // 2i+1
     }
 
     // ── Step 5: Angle-sort outgoing half-edges at every node ─────────────────
@@ -522,6 +624,7 @@ std::vector<SketchPicker::Loop> SketchPicker::findClosedLoops(const Sketch& sket
         for (int idx : cycle) {
             loop.polygon.push_back(nodes[he[idx].from]);
             loop.entityIds.push_back(he[idx].entityId);
+            loop.boundarySegments.push_back(he[idx].boundary);
         }
         result.push_back(std::move(loop));
     }
@@ -533,6 +636,48 @@ std::vector<SketchPicker::DerivedLoopTopology> SketchPicker::buildLoopTopology(c
                                                                                float snapTol)
 {
     const auto loops = findClosedLoops(sketch, snapTol);
+    auto computeInteriorSample = [](const std::vector<QVector2D>& polygon) -> QVector2D {
+        if (polygon.empty())
+            return {};
+
+        QVector2D average;
+        for (const auto& point : polygon)
+            average += point;
+        average /= static_cast<float>(polygon.size());
+        if (SketchPicker::pointInPolygon(average, polygon))
+            return average;
+
+        float areaFactor = 0.0f;
+        QVector2D areaCentroid;
+        for (int i = 0; i < static_cast<int>(polygon.size()); ++i) {
+            const QVector2D a = polygon[i];
+            const QVector2D b = polygon[(i + 1) % static_cast<int>(polygon.size())];
+            const float cross = a.x() * b.y() - b.x() * a.y();
+            areaFactor += cross;
+            areaCentroid += QVector2D((a.x() + b.x()) * cross,
+                                      (a.y() + b.y()) * cross);
+        }
+        if (std::abs(areaFactor) > 1e-5f) {
+            areaCentroid /= (3.0f * areaFactor);
+            if (SketchPicker::pointInPolygon(areaCentroid, polygon))
+                return areaCentroid;
+        }
+
+        for (int i = 0; i < static_cast<int>(polygon.size()); ++i) {
+            const QVector2D a = polygon[i];
+            const QVector2D b = polygon[(i + 1) % static_cast<int>(polygon.size())];
+            const QVector2D edgeMidpoint = (a + b) * 0.5f;
+            const QVector2D blendedMidpoint = (average + edgeMidpoint) * 0.5f;
+            if (SketchPicker::pointInPolygon(blendedMidpoint, polygon))
+                return blendedMidpoint;
+
+            const QVector2D triangleCentroid = (polygon.front() + a + b) / 3.0f;
+            if (SketchPicker::pointInPolygon(triangleCentroid, polygon))
+                return triangleCentroid;
+        }
+
+        return average;
+    };
 
     std::vector<DerivedLoopTopology> topology;
     topology.reserve(loops.size());
@@ -542,7 +687,9 @@ std::vector<SketchPicker::DerivedLoopTopology> SketchPicker::buildLoopTopology(c
         derived.loopIndex = i;
         derived.polygon = loops[i].polygon;
         derived.entityIds = loops[i].entityIds;
+        derived.boundarySegments = loops[i].boundarySegments;
         derived.signedArea = signedPolygonArea(loops[i].polygon);
+        derived.samplePoint = computeInteriorSample(derived.polygon);
         topology.push_back(std::move(derived));
     }
 
@@ -551,7 +698,6 @@ std::vector<SketchPicker::DerivedLoopTopology> SketchPicker::buildLoopTopology(c
         if (topology[i].polygon.empty())
             continue;
 
-        const QVector2D samplePoint = topology[i].polygon.front();
         float bestParentArea = std::numeric_limits<float>::max();
 
         for (int j = 0; j < static_cast<int>(topology.size()); ++j) {
@@ -562,7 +708,7 @@ std::vector<SketchPicker::DerivedLoopTopology> SketchPicker::buildLoopTopology(c
             const float loopArea = polygonArea(topology[i].polygon);
             if (candidateArea <= loopArea + kAreaEpsilon)
                 continue;
-            if (!pointInPolygon(samplePoint, topology[j].polygon))
+            if (!pointInPolygon(topology[i].samplePoint, topology[j].polygon))
                 continue;
 
             if (candidateArea < bestParentArea) {
@@ -589,6 +735,7 @@ std::vector<SketchPicker::DerivedLoopTopology> SketchPicker::buildLoopTopology(c
             parent = topology[*parent].parentLoopIndex;
         }
         topology[i].nestingDepth = depth;
+        topology[i].isSelectableMaterial = (depth % 2) == 0;
     }
 
     return topology;
@@ -621,13 +768,36 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
     std::vector<SelectedSketchProfile> profiles;
     profiles.reserve(selection.loopIndices.size());
 
-    auto appendLoopEntities =
+    auto appendLoopSegments =
         [&](const DerivedLoopTopology& loop,
             std::vector<quint64>& entityIds,
-            std::vector<SketchEntity>& entities,
+            std::vector<SketchBoundarySegment>& boundarySegments,
             int ownerLoopIndex) -> bool
     {
-        for (quint64 entityId : loop.entityIds) {
+        if (loop.boundarySegments.empty()) {
+            if (errorMsg) {
+                *errorMsg = QString("Selected sketch face %1 has no usable boundary geometry.")
+                                .arg(ownerLoopIndex);
+            }
+            LOG_WARN("SketchPicker::resolveSelectedProfiles: loop {} has no boundary segments",
+                     ownerLoopIndex);
+            return false;
+        }
+
+        for (const auto& boundary : loop.boundarySegments) {
+            if (boundary.type != SketchEntity::Line && boundary.type != SketchEntity::Arc) {
+                if (errorMsg) {
+                    *errorMsg = QString("Selected sketch face %1 references unsupported boundary geometry.")
+                                    .arg(ownerLoopIndex);
+                }
+                LOG_WARN("SketchPicker::resolveSelectedProfiles: unsupported boundary type {} for loop {}",
+                         static_cast<int>(boundary.type), ownerLoopIndex);
+                return false;
+            }
+
+            boundarySegments.push_back(boundary);
+
+            const quint64 entityId = boundary.sourceEntityId;
             if (std::find(entityIds.begin(), entityIds.end(), entityId) != entityIds.end()) {
                 LOG_DEBUG("SketchPicker::resolveSelectedProfiles: ignoring duplicate entity {} for loop {}",
                           entityId, ownerLoopIndex);
@@ -646,7 +816,6 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
             }
 
             entityIds.push_back(entityId);
-            entities.push_back(*entity);
         }
 
         return true;
@@ -670,7 +839,7 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
                      loopIndex, loop.polygon.size());
             return {};
         }
-        if ((loop.nestingDepth % 2) != 0) {
+        if (!loop.isSelectableMaterial) {
             if (errorMsg) {
                 *errorMsg = QString("Selected sketch face %1 is a hole, not a bounded face. "
                                     "Click the material area outside the hole boundary.")
@@ -688,14 +857,14 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
         profile.polygon = loop.polygon;
         profile.isClosed = true;
 
-        if (!appendLoopEntities(loop,
+        if (!appendLoopSegments(loop,
                                 profile.sourceEntityIds,
-                                profile.sourceEntities,
+                                profile.boundarySegments,
                                 loopIndex)) {
             return {};
         }
 
-        if (profile.sourceEntities.empty()) {
+        if (profile.boundarySegments.empty()) {
             if (errorMsg)
                 *errorMsg = QString("Selected sketch face %1 has no usable boundary geometry.")
                                 .arg(loopIndex);
@@ -709,6 +878,8 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
                 continue;
 
             const auto& childLoop = topology[childLoopIndex];
+            if (childLoop.isSelectableMaterial)
+                continue;
             if (childLoop.polygon.size() < 3) {
                 if (errorMsg) {
                     *errorMsg = QString("Selected sketch face %1 contains a degenerate hole boundary.")
@@ -722,14 +893,14 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
             HoleBoundary hole;
             hole.holeLoopIndex = childLoopIndex;
             hole.polygon = childLoop.polygon;
-            if (!appendLoopEntities(childLoop,
+            if (!appendLoopSegments(childLoop,
                                     hole.entityIds,
-                                    hole.entities,
+                                    hole.boundarySegments,
                                     loopIndex)) {
                 return {};
             }
 
-            if (hole.entities.empty()) {
+            if (hole.boundarySegments.empty()) {
                 if (errorMsg) {
                     *errorMsg = QString("Selected sketch face %1 contains a hole with no usable boundary geometry.")
                                     .arg(loopIndex);
@@ -785,7 +956,7 @@ bool SketchPicker::selectableLoopContainsPoint(const std::vector<DerivedLoopTopo
         return false;
 
     const auto& loop = topology[loopIndex];
-    if ((loop.nestingDepth % 2) != 0)
+    if (!loop.isSelectableMaterial)
         return false;
     if (!loopContainsPoint(loop, pt))
         return false;

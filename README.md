@@ -51,6 +51,21 @@ cmake --build build --parallel $(nproc)
 ./build/bin/elcad
 ```
 
+## Regression checks
+
+This feature set includes a dedicated sketch-intersection regression target:
+
+```bash
+cmake --build build --target sketch_intersection_regression --parallel $(nproc)
+ctest --test-dir build --output-on-failure -R sketch-intersection-regression
+```
+
+Keep the full Release build command as the baseline integration verification:
+
+```bash
+cmake --build build --parallel $(nproc)
+```
+
 ## Spec Kit with GitHub Copilot CLI
 
 This repository includes a Spec Kit installation for Copilot, but in **GitHub Copilot CLI**

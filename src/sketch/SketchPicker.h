@@ -34,6 +34,7 @@ public:
     struct FlatSeg {
         QVector2D a, b;
         quint64   entityId;  // original sketch entity this sub-segment belongs to
+        SketchBoundarySegment boundary;
     };
 
     // Flatten all non-construction Line entities: collect every pairwise
@@ -44,15 +45,19 @@ public:
 
     // A closed polygon loop found within a sketch.
     struct Loop {
-        std::vector<QVector2D> polygon;    // 2D vertices in order
-        std::vector<quint64>   entityIds;  // participating line entity IDs
+        std::vector<QVector2D>            polygon;    // 2D vertices in order
+        std::vector<quint64>              entityIds;  // participating source entity IDs
+        std::vector<SketchBoundarySegment> boundarySegments;
     };
 
     struct DerivedLoopTopology {
         int                    loopIndex{-1};
         std::vector<QVector2D> polygon;
         std::vector<quint64>   entityIds;
+        std::vector<SketchBoundarySegment> boundarySegments;
         float                  signedArea{0.0f};
+        QVector2D              samplePoint;
+        bool                   isSelectableMaterial{false};
         std::optional<int>     parentLoopIndex;
         std::vector<int>       childLoopIndices;
         int                    nestingDepth{0};

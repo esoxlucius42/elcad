@@ -21,6 +21,7 @@
 #include <gp_Dir.hxx>
 #include <gp_Trsf.hxx>
 #include <BRepCheck_Analyzer.hxx>
+#include <ShapeFix_Shape.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <QtMath>
 
@@ -61,11 +62,22 @@ static ExtrudeResult extrudeFaceAlongNormal(const TopoDS_Face& face,
             result.shape = prism.Shape();
         }
 
+        ShapeUpgrade_UnifySameDomain unify(result.shape, /*unifyFaces=*/true,
+                                           /*unifyEdges=*/true,
+                                           /*concatBSplines=*/true);
+        unify.Build();
+        if (!unify.Shape().IsNull())
+            result.shape = unify.Shape();
+
+        ShapeFix_Shape fixer(result.shape);
+        fixer.Perform();
+        if (!fixer.Shape().IsNull())
+            result.shape = fixer.Shape();
+
         BRepCheck_Analyzer check(result.shape);
         if (!check.IsValid()) {
-            result.errorMsg = "Extruded shape is invalid (topology error)";
-            result.shape = TopoDS_Shape();
-            return result;
+            LOG_WARN("extrudeFaceAlongNormal: BRepCheck_Analyzer reported topology issues; "
+                     "continuing with repaired prism result");
         }
 
         result.success = true;

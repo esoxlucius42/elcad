@@ -37,7 +37,7 @@ public:
         Type    type{Type::Body};
         quint64 bodyId{0};    // owning body (for Body/Face/Edge/Vertex types)
         quint64 sketchId{0};  // owning sketch (for Sketch* types)
-        int     index{-1};    // face/edge/vertex index within body; area loop index for SketchArea
+        int     index{-1};    // face/edge/vertex index within body; resolved bounded-region index for SketchArea
         quint64 entityId{0};  // sketch entity id (for SketchPoint and SketchLine)
 
         bool operator==(SelectedItem const& o) const noexcept {
@@ -53,6 +53,7 @@ public:
     bool   isSelected(const SelectedItem& it) const;
     std::vector<SelectedItem> selectionItems() const;
     std::optional<SketchFaceSelection> selectedSketchFaces(quint64 sketchId = 0) const;
+    void   clearSketchSelection(quint64 sketchId);
 
     Body*  singleSelectedBody() const;
 
