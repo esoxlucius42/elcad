@@ -2,10 +2,13 @@
 #include "core/Logger.h"
 #include "ui/MainWindow.h"
 #include <QByteArray>
+#include <QResource>
 #include <cstdlib>
 
 int main(int argc, char* argv[])
 {
+    Q_INIT_RESOURCE(resources);
+
     // On Wayland, Qt6 uses EGL which returns EGL_BAD_MATCH when
     // QOpenGLWidget tries to create a desktop-GL context sharing with
     // the backing store's OpenGL ES context.  Force X11/XCB so that

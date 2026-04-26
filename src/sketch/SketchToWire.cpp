@@ -32,6 +32,14 @@ static gp_Pnt toGp(QVector2D p2d, const SketchPlane& plane) {
     return gp_Pnt(p.x(), p.y(), p.z());
 }
 
+static gp_Circ makeGpCircle(QVector2D center, float radius, const SketchPlane& plane)
+{
+    gp_Pnt circleCenter = toGp(center, plane);
+    gp_Dir norm(plane.normal().x(), plane.normal().y(), plane.normal().z());
+    gp_Dir xd(plane.xAxis().x(), plane.xAxis().y(), plane.xAxis().z());
+    return gp_Circ(gp_Ax2(circleCenter, norm, xd), radius);
+}
+
 static SketchToWireResult buildWireFromEntities(const std::vector<SketchEntity>& entities,
                                                 const SketchPlane& plane,
                                                 bool requireClosedFace,
@@ -166,6 +174,112 @@ static SketchToWireResult buildWireFromEntities(const std::vector<SketchEntity>&
     return result;
 }
 
+static SketchToWireResult buildWireFromSegments(const std::vector<SketchBoundarySegment>& segments,
+                                                const SketchPlane& plane,
+                                                bool requireClosedFace,
+                                                const QString& emptyError,
+                                                const QString& disconnectedError,
+                                                const QString& openWireError,
+                                                const char* logContext)
+{
+    SketchToWireResult result;
+    if (segments.empty()) {
+        result.errorMsg = emptyError;
+        LOG_ERROR("{} failed — no boundary segments were provided", logContext);
+        return result;
+    }
+
+    LOG_DEBUG("{}: converting {} resolved boundary segments", logContext, segments.size());
+
+    BRepBuilderAPI_MakeWire wireBuilder;
+    bool hasEdges = false;
+
+    for (const auto& segment : segments) {
+        try {
+            if (segment.type == SketchEntity::Line) {
+                gp_Pnt p0 = toGp(segment.start, plane);
+                gp_Pnt p1 = toGp(segment.end, plane);
+                if (p0.Distance(p1) < 1e-6) {
+                    LOG_WARN("{}: skipping degenerate boundary line from entity {}",
+                             logContext, segment.sourceEntityId);
+                    continue;
+                }
+                Handle(Geom_TrimmedCurve) edge = GC_MakeSegment(p0, p1).Value();
+                wireBuilder.Add(BRepBuilderAPI_MakeEdge(edge).Edge());
+                hasEdges = true;
+            } else if (segment.type == SketchEntity::Arc) {
+                gp_Pnt start = toGp(segment.start, plane);
+                gp_Pnt end = toGp(segment.end, plane);
+                if (start.Distance(end) < 1e-6) {
+                    LOG_WARN("{}: skipping degenerate boundary arc from entity {}",
+                             logContext, segment.sourceEntityId);
+                    continue;
+                }
+
+                gp_Circ circle = makeGpCircle(segment.center, segment.radius, plane);
+                Handle(Geom_TrimmedCurve) edge =
+                    GC_MakeArcOfCircle(circle, start, end, segment.counterClockwise).Value();
+                wireBuilder.Add(BRepBuilderAPI_MakeEdge(edge).Edge());
+                hasEdges = true;
+            }
+        } catch (...) {
+            result.errorMsg = "Edge construction failed for selected boundary geometry.";
+            LOG_WARN("{}: failed to build resolved boundary segment from entity {} type={} "
+                     "start=({:.4f},{:.4f}) end=({:.4f},{:.4f}) radius={:.4f} ccw={}",
+                     logContext,
+                     segment.sourceEntityId,
+                     static_cast<int>(segment.type),
+                     segment.start.x(),
+                     segment.start.y(),
+                     segment.end.x(),
+                     segment.end.y(),
+                     segment.radius,
+                     segment.counterClockwise);
+            return result;
+        }
+    }
+
+    if (!hasEdges) {
+        result.errorMsg = emptyError;
+        LOG_ERROR("{} failed — all resolved boundary segments were degenerate", logContext);
+        return result;
+    }
+
+    if (!wireBuilder.IsDone()) {
+        result.errorMsg = disconnectedError;
+        LOG_ERROR("{} failed — resolved boundary segments could not be connected into a wire",
+                  logContext);
+        return result;
+    }
+
+    ShapeFix_Wire fixer;
+    fixer.SetMaxTolerance(0.1);
+    fixer.Load(wireBuilder.Wire());
+    fixer.FixReorder();
+    fixer.FixConnected();
+    fixer.FixClosed();
+
+    result.wire = fixer.Wire();
+
+    BRepBuilderAPI_MakeFace faceMaker(result.wire, /*OnlyPlane=*/true);
+    if (faceMaker.IsDone()) {
+        result.face = faceMaker.Face();
+        result.success = true;
+        LOG_DEBUG("{}: closed wire from resolved boundary segments built successfully", logContext);
+    } else {
+        result.errorMsg = openWireError;
+        if (requireClosedFace) {
+            LOG_WARN("{}: resolved boundary wire is open (MakeFace failed)", logContext);
+            return result;
+        }
+
+        result.success = true;
+        LOG_WARN("{}: resolved boundary wire is open (MakeFace failed)", logContext);
+    }
+
+    return result;
+}
+
 SketchToWireResult SketchToWire::convert(const Sketch& sketch)
 {
     std::vector<SketchEntity> entities;
@@ -184,7 +298,7 @@ SketchToWireResult SketchToWire::convert(const Sketch& sketch)
 
 SketchToWireResult SketchToWire::buildFaceForProfile(const SelectedSketchProfile& profile)
 {
-    SketchToWireResult result = buildWireFromEntities(profile.sourceEntities,
+    SketchToWireResult result = buildWireFromSegments(profile.boundarySegments,
                                                       profile.plane,
                                                       true,
                                                       QString("Selected sketch face %1 has no usable boundary geometry.")
@@ -194,7 +308,7 @@ SketchToWireResult SketchToWire::buildFaceForProfile(const SelectedSketchProfile
                                                       QString("Selected sketch face %1 is not a closed loop.")
                                                           .arg(profile.loopIndex),
                                                       "SketchToWire::buildFaceForProfile");
-    if (!result.success || result.face.IsNull() || profile.holes.empty())
+    if (!result.success || result.wire.IsNull())
         return result;
 
     BRepBuilderAPI_MakeFace faceMaker(result.wire, /*OnlyPlane=*/true);
@@ -207,8 +321,8 @@ SketchToWireResult SketchToWire::buildFaceForProfile(const SelectedSketchProfile
     }
 
     for (const auto& hole : profile.holes) {
-        SketchToWireResult holeResult = buildWireFromEntities(
-            hole.entities,
+        SketchToWireResult holeResult = buildWireFromSegments(
+            hole.boundarySegments,
             profile.plane,
             true,
             QString("Selected sketch hole %1 for face %2 has no usable boundary geometry.")

@@ -6,27 +6,39 @@
 
 namespace elcad {
 
+using SketchRegionIndex = int;
+
+struct SketchBoundarySegment {
+    SketchEntity::Type type{SketchEntity::Line};
+    quint64            sourceEntityId{0};
+    QVector2D          start;
+    QVector2D          end;
+    QVector2D          center;
+    float              radius{0.0f};
+    bool               counterClockwise{true};
+};
+
 struct SketchFaceSelection {
-    quint64          sketchId{0};
-    std::vector<int> loopIndices;
+    quint64                       sketchId{0};
+    std::vector<SketchRegionIndex> loopIndices;
 };
 
 struct HoleBoundary {
-    int                    holeLoopIndex{-1};
-    std::vector<quint64>   entityIds;
-    std::vector<SketchEntity> entities;
-    std::vector<QVector2D> polygon;
+    SketchRegionIndex                 holeLoopIndex{-1};
+    std::vector<quint64>              entityIds;
+    std::vector<SketchBoundarySegment> boundarySegments;
+    std::vector<QVector2D>            polygon;
 };
 
 struct SelectedSketchProfile {
-    quint64                   sketchId{0};
-    int                       loopIndex{-1};
-    std::vector<quint64>      sourceEntityIds;
-    std::vector<SketchEntity> sourceEntities;
-    std::vector<QVector2D>    polygon;
-    std::vector<HoleBoundary> holes;
-    SketchPlane               plane;
-    bool                      isClosed{false};
+    quint64                           sketchId{0};
+    SketchRegionIndex                 loopIndex{-1};
+    std::vector<quint64>              sourceEntityIds;
+    std::vector<SketchBoundarySegment> boundarySegments;
+    std::vector<QVector2D>            polygon;
+    std::vector<HoleBoundary>         holes;
+    SketchPlane                       plane;
+    bool                              isClosed{false};
 };
 
 } // namespace elcad

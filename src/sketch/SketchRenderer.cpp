@@ -336,27 +336,13 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
     // Background-colour triangles that "erase" inner loop fills from outer ones.
     std::vector<QVector3D> fillHoles;
 
-    auto loops = SketchPicker::findClosedLoops(sketch);
-    int  nLoops = static_cast<int>(loops.size());
-
-    // Pre-compute polygon areas (reused for both fill-generation and hole-detection).
-    std::vector<float> loopArea(nLoops, 0.f);
-    for (int i = 0; i < nLoops; ++i) {
-        int n = static_cast<int>(loops[i].polygon.size());
-        for (int k = 0; k < n; ++k) {
-            QVector2D a = loops[i].polygon[k];
-            QVector2D b = loops[i].polygon[(k + 1) % n];
-            loopArea[i] += a.x() * b.y() - b.x() * a.y();
-        }
-        loopArea[i] = std::abs(loopArea[i]) * 0.5f;
-    }
-
-    for (int i = 0; i < nLoops; ++i) {
-        const auto& poly = loops[i].polygon;
+    auto topology = SketchPicker::buildLoopTopology(sketch);
+    for (const auto& loop : topology) {
+        const auto& poly = loop.polygon;
         if (poly.size() < 3) continue;
 
-        bool isHov = (hoveredAreaIndex == i);
-        bool isSel = isAreaSelected(i);
+        bool isHov = (hoveredAreaIndex == loop.loopIndex);
+        bool isSel = isAreaSelected(loop.loopIndex);
         if (!isHov && !isSel) continue;
 
         // Fan-triangulate from centroid.
@@ -373,21 +359,21 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
             fillOut.push_back(plane.to3D(b));
         }
 
-        // Punch out any smaller loops that are entirely contained within this one.
-        // This handles circles-inside-rectangles, arcs-inside-polygons, etc.
-        for (int j = 0; j < nLoops; ++j) {
-            if (j == i || loops[j].polygon.empty()) continue;
-            if (loopArea[j] >= loopArea[i]) continue;  // only punch out smaller loops
-            // A loop is "inside" this one if its first vertex is inside our polygon.
-            if (!SketchPicker::pointInPolygon(loops[j].polygon[0], poly)) continue;
-            // Build the inner-loop centroid and fan-triangulate into fillHoles.
+        for (int childLoopIndex : loop.childLoopIndices) {
+            if (childLoopIndex < 0 || childLoopIndex >= static_cast<int>(topology.size()))
+                continue;
+
+            const auto& childLoop = topology[childLoopIndex];
+            if (childLoop.isSelectableMaterial || childLoop.polygon.size() < 3)
+                continue;
+
             QVector2D ic{};
-            for (const auto& v : loops[j].polygon) ic += v;
-            ic /= static_cast<float>(loops[j].polygon.size());
-            int jn = static_cast<int>(loops[j].polygon.size());
+            for (const auto& v : childLoop.polygon) ic += v;
+            ic /= static_cast<float>(childLoop.polygon.size());
+            int jn = static_cast<int>(childLoop.polygon.size());
             for (int k = 0; k < jn; ++k) {
-                QVector2D a = loops[j].polygon[k];
-                QVector2D b = loops[j].polygon[(k + 1) % jn];
+                QVector2D a = childLoop.polygon[k];
+                QVector2D b = childLoop.polygon[(k + 1) % jn];
                 fillHoles.push_back(plane.to3D(ic));
                 fillHoles.push_back(plane.to3D(a));
                 fillHoles.push_back(plane.to3D(b));

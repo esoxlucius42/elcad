@@ -137,24 +137,28 @@ if(NOT glm_FOUND)
 endif()
 
 # ── Sources ───────────────────────────────────────────────────────────────────
-file(GLOB_RECURSE ELCAD_SOURCES
-    "src/*.cpp"
-    "src/*.h"
+file(GLOB_RECURSE ELCAD_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/*.h"
 )
+
+set(ELCAD_APP_ENTRY "${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp")
+set(ELCAD_CORE_SOURCES ${ELCAD_SOURCES})
+list(REMOVE_ITEM ELCAD_CORE_SOURCES "${ELCAD_APP_ENTRY}")
 
 qt6_add_resources(ELCAD_RESOURCES src/resources.qrc)
 
-add_executable(elcad
-    ${ELCAD_SOURCES}
+add_library(elcad_core STATIC
+    ${ELCAD_CORE_SOURCES}
     ${ELCAD_RESOURCES}
 )
 
-target_include_directories(elcad PRIVATE src)
+target_include_directories(elcad_core PUBLIC src)
 if(GLM_INCLUDE_DIR)
-    target_include_directories(elcad PRIVATE ${GLM_INCLUDE_DIR})
+    target_include_directories(elcad_core PUBLIC ${GLM_INCLUDE_DIR})
 endif()
 
-target_link_libraries(elcad PRIVATE
+target_link_libraries(elcad_core PUBLIC
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
@@ -165,37 +169,40 @@ target_link_libraries(elcad PRIVATE
 )
 
 # Compile all log levels into the binary; runtime sink level controls output.
-target_compile_definitions(elcad PRIVATE SPDLOG_ACTIVE_LEVEL=0)
+target_compile_definitions(elcad_core PRIVATE SPDLOG_ACTIVE_LEVEL=0)
 
 # ── Link OCCT ─────────────────────────────────────────────────────────────────
 if(ELCAD_HAVE_OCCT AND NOT ELCAD_OCCT_FIRST_BUILD)
     # find_package populated proper IMPORTED targets — link by name directly
-    target_link_libraries(elcad PRIVATE
+    target_link_libraries(elcad_core PUBLIC
         TKernel TKMath TKBRep TKPrim TKTopAlgo TKMesh
         TKG3d TKGeomBase TKGeomAlgo TKBO TKBool TKShHealing
         TKFeat TKFillet TKOffset
         TKDESTEP TKXSBase TKXCAF TKLCAF TKDE TKDECascade TKCDF TKCAF
     )
-    target_compile_definitions(elcad PRIVATE ELCAD_HAVE_OCCT)
+    target_compile_definitions(elcad_core PUBLIC ELCAD_HAVE_OCCT)
 elseif(ELCAD_OCCT_FIRST_BUILD)
     # ExternalProject hasn't installed yet — stubs are set up, just declare the dep
     # After 'cmake --build' completes, re-run cmake to pick up real targets
-    target_include_directories(elcad PRIVATE ${ELCAD_OCCT_STUB_INCLUDES})
-    target_link_libraries(elcad PRIVATE
+    target_include_directories(elcad_core PUBLIC ${ELCAD_OCCT_STUB_INCLUDES})
+    target_link_libraries(elcad_core PUBLIC
         TKernel TKMath TKBRep TKPrim TKTopAlgo TKMesh
         TKG3d TKGeomBase TKGeomAlgo TKBO TKBool TKShHealing
         TKFeat TKFillet TKOffset
         TKDESTEP TKXSBase TKXCAF TKLCAF TKDE TKDECascade TKCDF TKCAF
     )
-    target_compile_definitions(elcad PRIVATE ELCAD_HAVE_OCCT)
+    target_compile_definitions(elcad_core PUBLIC ELCAD_HAVE_OCCT)
 else()
     message(WARNING "Building without OpenCASCADE — geometry features disabled")
 endif()
 
 # ── Compiler warnings ─────────────────────────────────────────────────────────
-target_compile_options(elcad PRIVATE
+target_compile_options(elcad_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall -Wextra -Wpedantic>
 )
+
+add_executable(elcad ${ELCAD_APP_ENTRY})
+target_link_libraries(elcad PRIVATE elcad_core)
 
 # ── Install ───────────────────────────────────────────────────────────────────
 install(TARGETS elcad DESTINATION bin)
@@ -224,3 +231,6 @@ elseif(ELCAD_OCCT_FIRST_BUILD)
 else()
     message(WARNING "sphere_tess_count requires OpenCASCADE — target will be empty")
 endif()
+
+enable_testing()
+add_subdirectory(tests)
