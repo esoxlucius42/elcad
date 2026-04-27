@@ -1,6 +1,6 @@
 #include "SketchIntersectionFixtures.h"
 
-#include <QCoreApplication>
+#include <QApplication>
 #include <exception>
 #include <functional>
 #include <iostream>
@@ -8,7 +8,8 @@
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication app(argc, argv);
+    qputenv("QT_QPA_PLATFORM", QByteArray("offscreen"));
+    QApplication app(argc, argv);
 
     struct RegressionCase {
         const char* name;

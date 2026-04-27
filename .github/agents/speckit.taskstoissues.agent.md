@@ -15,7 +15,7 @@ You **MUST** consider the user input before proceeding (if not empty).
 
 - You may read and write repository files, update working or session memory, and run the commands or tool actions required by this workflow without asking for additional permission.
 - Treat invocation of this agent as approval for those routine actions within its documented scope, including GitHub issue creation when the workflow reaches that step.
-- Ask only when a required decision is ambiguous, when an action would be unusually destructive beyond the normal workflow, or when repository or runtime safety rules require confirmation.
+- Ask when a required decision is ambiguous, when an action would be unusually destructive beyond the normal workflow, when repository or runtime safety rules require confirmation, or when explicit user permission is required for an otherwise in-scope action.
 - Repository-level safety constraints still override this autonomy. If the active repository forbids autonomous commits, pushes, or tags, do not perform those operations even if this workflow would normally do so.
 
 ## Pre-Execution Checks

@@ -34,6 +34,12 @@ void runAdditiveSelectionTests()
     doc->addSelection(makeBodySelection(secondBodyId));
     require(doc->selectionItems().size() == 4,
             "re-adding an already selected item should be a no-op for plain click semantics");
+
+    doc->setSelection({faceSelection});
+    require(!doc->bodyById(firstBodyId)->selected(),
+            "face-only selection should not trigger whole-body highlight flags");
+    require(doc->singleSelectedBody() == doc->bodyById(firstBodyId),
+            "face-only selection should still resolve its owning body for single-target commands");
 }
 
 } // namespace elcad::test

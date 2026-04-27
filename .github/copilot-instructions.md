@@ -89,7 +89,7 @@ Operations that can fail return a result struct with a `bool success` and `QStri
 - New external dependencies should use `FetchContent` (lightweight) or the existing OCCT ExternalProject pattern (heavy, cached).
 
 <!-- SPECKIT START -->
-Current implementation plan: `specs/008-multi-object-selection/plan.md`
+Current implementation plan: `specs/009-fix-face-highlight/plan.md`
 
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan.

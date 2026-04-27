@@ -241,7 +241,7 @@ bool Document::syncBodySelectionFlags()
         const bool shouldSelect = std::any_of(m_selection.begin(),
                                               m_selection.end(),
                                               [&](const SelectedItem& item) {
-                                                  return !isSketchSelectionType(item.type)
+                                                  return item.type == SelectedItem::Type::Body
                                                       && item.bodyId == body->id();
                                               });
         if (body->selected() != shouldSelect) {

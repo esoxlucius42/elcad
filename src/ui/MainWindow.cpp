@@ -37,6 +37,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QApplication>
+#include <algorithm>
 
 #ifdef ELCAD_HAVE_OCCT
 #include <BRep_Builder.hxx>
@@ -598,8 +599,26 @@ void MainWindow::onExtrude()
         }
     }
 
+    auto resolveSelectedFaceTriangles = [this](Body* body, int faceTriIndex) {
+        std::vector<int> tris;
+        if (!body) return tris;
+
+        for (const auto& s : m_document->selectionItems()) {
+            if (s.type == Document::SelectedItem::Type::Face && s.bodyId == body->id())
+                tris.push_back(s.index);
+        }
+
+        std::sort(tris.begin(), tris.end());
+        tris.erase(std::unique(tris.begin(), tris.end()), tris.end());
+
+        if (tris.empty())
+            tris = m_viewport->renderer().resolveFaceSelectionTriangles(body, faceTriIndex, 10.0f, 1e-3f);
+
+        return tris;
+    };
+
     // Store the resolved state in a closure for deferred execution via the panel
-    m_pendingExtrudeFn = [this, faceExtrude, faceBody, faceTriIndex, sketch, selectedProfiles](ExtrudeParams params) {
+    m_pendingExtrudeFn = [this, faceExtrude, faceBody, faceTriIndex, sketch, selectedProfiles, resolveSelectedFaceTriangles](ExtrudeParams params) {
         LOG_INFO("Extrude: distance={:.4f} mode={} symmetric={}",
                  params.distance, params.mode, params.symmetric);
 
@@ -631,14 +650,7 @@ void MainWindow::onExtrude()
             if (occtFace.IsNull()) {
                 LOG_DEBUG("Extrude: face extraction failed (faceOrd={} tri={}) — attempting mesh fallback", faceOrd, faceTriIndex);
 
-                std::vector<int> tris;
-                for (const auto& s : m_document->selectionItems()) {
-                    if (s.type == Document::SelectedItem::Type::Face && s.bodyId == faceBody->id())
-                        tris.push_back(s.index);
-                }
-                if (tris.empty()) {
-                    tris = m_viewport->renderer().expandFaceSelection(faceBody, faceTriIndex, 10.0f, 1e-3f);
-                }
+                std::vector<int> tris = resolveSelectedFaceTriangles(faceBody, faceTriIndex);
 
                 LOG_DEBUG("Extrude fallback: attempting to build face from {} triangles", tris.size());
                 if (!tris.empty()) {
@@ -818,7 +830,7 @@ void MainWindow::onExtrude()
     };
 
     // Build a preview closure that computes the same shape but never mutates Document
-    m_pendingExtrudePreviewFn = [this, faceExtrude, faceBody, faceTriIndex, sketch, selectedProfiles, makePreviewShape]
+    m_pendingExtrudePreviewFn = [this, faceExtrude, faceBody, faceTriIndex, sketch, selectedProfiles, makePreviewShape, resolveSelectedFaceTriangles]
                                  (ExtrudeParams params) {
         ExtrudeResult res;
         Body* targetBody = nullptr;
@@ -836,13 +848,7 @@ void MainWindow::onExtrude()
             }
 
             if (occtFace.IsNull()) {
-                std::vector<int> tris;
-                for (const auto& s : m_document->selectionItems()) {
-                    if (s.type == Document::SelectedItem::Type::Face && s.bodyId == faceBody->id())
-                        tris.push_back(s.index);
-                }
-                if (tris.empty())
-                    tris = m_viewport->renderer().expandFaceSelection(faceBody, faceTriIndex, 10.0f, 1e-3f);
+                std::vector<int> tris = resolveSelectedFaceTriangles(faceBody, faceTriIndex);
                 if (!tris.empty())
                     occtFace = m_viewport->renderer().buildFaceFromTriangles(faceBody, tris);
             }

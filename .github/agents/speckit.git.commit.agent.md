@@ -13,8 +13,8 @@ Automatically stage and commit all changes after a Spec Kit command completes.
 
 - You may run the commands required by this workflow without asking for additional permission, but only when those commands are allowed by the active repository and runtime policies.
 - Treat invocation of this agent as approval for routine command execution within its documented scope.
-- If repository-level rules forbid autonomous staging or commits, stop before those operations and report the policy conflict instead of asking for extra permission or proceeding anyway.
-- Ask only when a required decision is ambiguous or when a safety rule blocks the normal workflow.
+- If repository-level rules or runtime policies require explicit user approval for staging or commits, ask the user for that approval before proceeding.
+- Ask when a required decision is ambiguous, when a safety rule blocks the normal workflow, or when explicit user permission is required for an otherwise in-scope action.
 
 ## Behavior
 
