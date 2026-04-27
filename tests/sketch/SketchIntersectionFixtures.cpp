@@ -34,6 +34,16 @@ std::unique_ptr<Sketch> makeNestedRectangleCircleSketch()
     return sketch;
 }
 
+std::unique_ptr<Sketch> makeClockwiseArcSegmentSketch()
+{
+    auto sketch = std::make_unique<Sketch>(SketchPlane::xy());
+    const float chordX = 5.0f;
+    const float chordY = 10.0f * (std::sqrt(3.0f) * 0.5f);
+    sketch->addArc(0.0f, 0.0f, 10.0f, 300.0f, 60.0f);
+    sketch->addLine(chordX, -chordY, chordX, chordY);
+    return sketch;
+}
+
 std::unique_ptr<Sketch> makeTangentRectangleCircleSketch()
 {
     auto sketch = std::make_unique<Sketch>(SketchPlane::xy());

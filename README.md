@@ -66,6 +66,12 @@ Keep the full Release build command as the baseline integration verification:
 cmake --build build --parallel $(nproc)
 ```
 
+## Sketch overlap workflow
+
+- Completed sketches now partition supported overlapping sketch geometry into bounded material regions that can be highlighted and selected independently.
+- Extrude resolves the selected sketch face into explicit outer/hole boundaries before building the OCCT face, so overlap-generated regions extrude as closed profiles instead of falling back to the whole sketch.
+- Re-editing or hiding a sketch clears stale completed-sketch area selections so region picking stays aligned with the latest sketch topology.
+
 ## Spec Kit with GitHub Copilot CLI
 
 This repository includes a Spec Kit installation for Copilot, but in **GitHub Copilot CLI**

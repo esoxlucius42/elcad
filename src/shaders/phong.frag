@@ -22,7 +22,11 @@ out vec4 fragColor;
 
 void main()
 {
-    vec3  n    = normalize(vNormal);
+    vec3  viewDir = normalize(uViewPos - vFragPos);
+    vec3  n       = normalize(vNormal);
+    if (dot(n, viewDir) < 0.0) {
+        n = -n;
+    }
 
     // Hemisphere ambient: sky color for up-facing normals, ground for down-facing
     float t       = n.y * 0.5 + 0.5;
@@ -37,7 +41,6 @@ void main()
     vec3  fillDiffuse = fillDiff * uFillColor;
 
     // Specular (Blinn-Phong, key light only)
-    vec3  viewDir  = normalize(uViewPos - vFragPos);
     vec3  halfDir  = normalize(normalize(uLightDir) + viewDir);
     float spec     = pow(max(dot(n, halfDir), 0.0), 32.0);
     vec3  specular = spec * 0.3 * uLightColor;

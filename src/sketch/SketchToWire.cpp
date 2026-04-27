@@ -8,6 +8,7 @@
 #include "sketch/SketchEntity.h"
 
 #include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <GC_MakeSegment.hxx>
@@ -22,8 +23,11 @@
 #include <ShapeFix_Face.hxx>
 #include <TopoDS_Wire.hxx>
 #include <TopoDS_Face.hxx>
+#include <TopoDS_Vertex.hxx>
 #include <BRepAlgo_NormalProjection.hxx>
+#include <gp_Pln.hxx>
 #include <QtMath>
+#include <cmath>
 
 namespace elcad {
 
@@ -38,6 +42,24 @@ static gp_Circ makeGpCircle(QVector2D center, float radius, const SketchPlane& p
     gp_Dir norm(plane.normal().x(), plane.normal().y(), plane.normal().z());
     gp_Dir xd(plane.xAxis().x(), plane.xAxis().y(), plane.xAxis().z());
     return gp_Circ(gp_Ax2(circleCenter, norm, xd), radius);
+}
+
+static gp_Pln makeGpPlane(const SketchPlane& plane)
+{
+    const QVector3D origin = plane.origin();
+    const QVector3D normal = plane.normal();
+    const QVector3D xAxis = plane.xAxis();
+    return gp_Pln(gp_Ax3(gp_Pnt(origin.x(), origin.y(), origin.z()),
+                         gp_Dir(normal.x(), normal.y(), normal.z()),
+                         gp_Dir(xAxis.x(), xAxis.y(), xAxis.z())));
+}
+
+static double normalizeRadians(double angle)
+{
+    angle = std::fmod(angle, 2.0 * M_PI);
+    if (angle < 0.0)
+        angle += 2.0 * M_PI;
+    return angle;
 }
 
 static SketchToWireResult buildWireFromEntities(const std::vector<SketchEntity>& entities,
@@ -193,33 +215,66 @@ static SketchToWireResult buildWireFromSegments(const std::vector<SketchBoundary
 
     BRepBuilderAPI_MakeWire wireBuilder;
     bool hasEdges = false;
+    TopTools_ListOfShape edges;
+    std::vector<QVector2D> vertexPositions;
+    vertexPositions.reserve(segments.size());
+    std::vector<TopoDS_Vertex> sharedVertices;
+    sharedVertices.reserve(segments.size());
+    for (const auto& segment : segments)
+        vertexPositions.push_back(segment.start);
+    for (const auto& point : vertexPositions)
+        sharedVertices.push_back(BRepBuilderAPI_MakeVertex(toGp(point, plane)).Vertex());
 
-    for (const auto& segment : segments) {
+    for (std::size_t index = 0; index < segments.size(); ++index) {
+        const auto& segment = segments[index];
+        const QVector2D& startPoint = vertexPositions[index];
+        const QVector2D& endPoint = vertexPositions[(index + 1) % vertexPositions.size()];
+        const TopoDS_Vertex& startVertex = sharedVertices[index];
+        const TopoDS_Vertex& endVertex = sharedVertices[(index + 1) % sharedVertices.size()];
         try {
             if (segment.type == SketchEntity::Line) {
-                gp_Pnt p0 = toGp(segment.start, plane);
-                gp_Pnt p1 = toGp(segment.end, plane);
+                gp_Pnt p0 = toGp(startPoint, plane);
+                gp_Pnt p1 = toGp(endPoint, plane);
                 if (p0.Distance(p1) < 1e-6) {
                     LOG_WARN("{}: skipping degenerate boundary line from entity {}",
                              logContext, segment.sourceEntityId);
                     continue;
                 }
                 Handle(Geom_TrimmedCurve) edge = GC_MakeSegment(p0, p1).Value();
-                wireBuilder.Add(BRepBuilderAPI_MakeEdge(edge).Edge());
+                edges.Append(BRepBuilderAPI_MakeEdge(edge, startVertex, endVertex).Edge());
                 hasEdges = true;
             } else if (segment.type == SketchEntity::Arc) {
-                gp_Pnt start = toGp(segment.start, plane);
-                gp_Pnt end = toGp(segment.end, plane);
+                gp_Pnt start = toGp(startPoint, plane);
+                gp_Pnt end = toGp(endPoint, plane);
                 if (start.Distance(end) < 1e-6) {
                     LOG_WARN("{}: skipping degenerate boundary arc from entity {}",
                              logContext, segment.sourceEntityId);
                     continue;
                 }
 
+                const double startAngle =
+                    normalizeRadians(std::atan2(startPoint.y() - segment.center.y(),
+                                                startPoint.x() - segment.center.x()));
+                const double endAngle =
+                    normalizeRadians(std::atan2(endPoint.y() - segment.center.y(),
+                                                endPoint.x() - segment.center.x()));
+                const double sweep = segment.counterClockwise
+                    ? normalizeRadians(endAngle - startAngle)
+                    : -normalizeRadians(startAngle - endAngle);
+                const double midAngle = startAngle + (sweep * 0.5);
+                const QVector2D midPoint(
+                    segment.center.x() + segment.radius * std::cos(midAngle),
+                    segment.center.y() + segment.radius * std::sin(midAngle));
+
+                Handle(Geom_TrimmedCurve) edge =
+                    GC_MakeArcOfCircle(start, toGp(midPoint, plane), end).Value();
+                edges.Append(BRepBuilderAPI_MakeEdge(edge, startVertex, endVertex).Edge());
+                hasEdges = true;
+            } else if (segment.type == SketchEntity::Circle) {
                 gp_Circ circle = makeGpCircle(segment.center, segment.radius, plane);
                 Handle(Geom_TrimmedCurve) edge =
-                    GC_MakeArcOfCircle(circle, start, end, segment.counterClockwise).Value();
-                wireBuilder.Add(BRepBuilderAPI_MakeEdge(edge).Edge());
+                    GC_MakeArcOfCircle(circle, 0.0, 2.0 * M_PI, true).Value();
+                edges.Append(BRepBuilderAPI_MakeEdge(edge).Edge());
                 hasEdges = true;
             }
         } catch (...) {
@@ -245,6 +300,7 @@ static SketchToWireResult buildWireFromSegments(const std::vector<SketchBoundary
         return result;
     }
 
+    wireBuilder.Add(edges);
     if (!wireBuilder.IsDone()) {
         result.errorMsg = disconnectedError;
         LOG_ERROR("{} failed — resolved boundary segments could not be connected into a wire",
@@ -261,7 +317,7 @@ static SketchToWireResult buildWireFromSegments(const std::vector<SketchBoundary
 
     result.wire = fixer.Wire();
 
-    BRepBuilderAPI_MakeFace faceMaker(result.wire, /*OnlyPlane=*/true);
+    BRepBuilderAPI_MakeFace faceMaker(makeGpPlane(plane), result.wire, /*Inside=*/true);
     if (faceMaker.IsDone()) {
         result.face = faceMaker.Face();
         result.success = true;
@@ -311,7 +367,7 @@ SketchToWireResult SketchToWire::buildFaceForProfile(const SelectedSketchProfile
     if (!result.success || result.wire.IsNull())
         return result;
 
-    BRepBuilderAPI_MakeFace faceMaker(result.wire, /*OnlyPlane=*/true);
+    BRepBuilderAPI_MakeFace faceMaker(makeGpPlane(profile.plane), result.wire, /*Inside=*/true);
     if (!faceMaker.IsDone()) {
         result.success = false;
         result.errorMsg =
@@ -352,6 +408,7 @@ SketchToWireResult SketchToWire::buildFaceForProfile(const SelectedSketchProfile
     }
 
     ShapeFix_Face fixer(faceMaker.Face());
+    fixer.FixOrientation();
     fixer.Perform();
     result.face = fixer.Face();
     result.success = !result.face.IsNull();

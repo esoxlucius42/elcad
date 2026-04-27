@@ -15,6 +15,35 @@
 
 namespace elcad {
 
+bool Renderer::bindPhongSurfacePass(const QMatrix4x4& model,
+                                    const QMatrix4x4& view,
+                                    const QMatrix4x4& proj,
+                                    const QMatrix3x3& normalMat,
+                                    const QVector3D& objectColor,
+                                    const QVector3D& camPos,
+                                    float alpha)
+{
+    if (!m_phong.isValid()) {
+        return false;
+    }
+
+    m_phong.bind();
+    m_phong.setMat4("uModel", model);
+    m_phong.setMat4("uView", view);
+    m_phong.setMat4("uProjection", proj);
+    m_phong.setMat3("uNormalMatrix", normalMat);
+    m_phong.setVec3("uLightDir", m_lightDir.normalized());
+    m_phong.setVec3("uLightColor", m_lightColor);
+    m_phong.setVec3("uObjectColor", objectColor);
+    m_phong.setVec3("uViewPos", camPos);
+    m_phong.setVec3("uSkyColor", m_skyColor);
+    m_phong.setVec3("uGroundColor", m_groundColor);
+    m_phong.setVec3("uFillDir", m_fillDir.normalized());
+    m_phong.setVec3("uFillColor", m_fillColor);
+    m_phong.setFloat("uAlpha", alpha);
+    return true;
+}
+
 void Renderer::initialize()
 {
     if (m_initialized) return;
@@ -74,6 +103,7 @@ void Renderer::render(Camera& camera, Document* doc,
     QVector3D camPos = camera.position();
 
     // Opaque pass: draw all body faces first, then edges on top
+    glDisable(GL_CULL_FACE);
     glPolygonOffset(1.f, 1.f);
     glEnable(GL_POLYGON_OFFSET_FILL);
 
@@ -96,28 +126,18 @@ void Renderer::render(Camera& camera, Document* doc,
             LOG_DEBUG("Preview mesh built: {} triangles", m_previewMesh->triangleCount() / 3);
         }
 
-        if (m_previewMesh && !m_previewMesh->isEmpty() && m_phong.isValid()) {
-            // FR-001, FR-002: Enable camera-facing preview rendering
+        if (m_previewMesh && !m_previewMesh->isEmpty()) {
+            // Preview uses the same single-pass Phong path as committed bodies so
+            // two-sided visibility comes from shared shading, not extra geometry.
             setupPreviewRenderState();
 
             QMatrix4x4 model;
             QMatrix3x3 normalMat = model.normalMatrix();
-            m_phong.bind();
-            m_phong.setMat4("uModel",        model);
-            m_phong.setMat4("uView",         view);
-            m_phong.setMat4("uProjection",   proj);
-            m_phong.setMat3("uNormalMatrix", normalMat);
-            m_phong.setVec3("uLightDir",     m_lightDir.normalized());
-            m_phong.setVec3("uLightColor",   m_lightColor);
-            m_phong.setVec3("uObjectColor",  QVector3D(0.25f, 0.85f, 0.95f));  // cyan ghost
-            m_phong.setVec3("uViewPos",      camPos);
-            m_phong.setVec3("uSkyColor",     m_skyColor);
-            m_phong.setVec3("uGroundColor",  m_groundColor);
-            m_phong.setVec3("uFillDir",      m_fillDir.normalized());
-            m_phong.setVec3("uFillColor",    m_fillColor);
-            m_phong.setFloat("uAlpha",       0.45f);
-            m_previewMesh->drawTriangles();
-            m_phong.release();
+            if (bindPhongSurfacePass(model, view, proj, normalMat,
+                                     QVector3D(0.25f, 0.85f, 0.95f), camPos, 0.45f)) {
+                m_previewMesh->drawTriangles();
+                m_phong.release();
+            }
 
             restoreDefaultRenderState();
         }
@@ -226,22 +246,7 @@ void Renderer::drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& pr
     QVector3D objColor(c.redF(), c.greenF(), c.blueF());
 
     // ── Phong-shaded triangles ────────────────────────────────────────────────
-    if (m_phong.isValid()) {
-        m_phong.bind();
-        m_phong.setMat4("uModel",       model);
-        m_phong.setMat4("uView",        view);
-        m_phong.setMat4("uProjection",  proj);
-        m_phong.setMat3("uNormalMatrix",normalMat);
-        m_phong.setVec3("uLightDir",    m_lightDir.normalized());
-        m_phong.setVec3("uLightColor",  m_lightColor);
-        m_phong.setVec3("uObjectColor", objColor);
-        m_phong.setVec3("uViewPos",     camPos);
-        m_phong.setVec3("uSkyColor",    m_skyColor);
-        m_phong.setVec3("uGroundColor", m_groundColor);
-        m_phong.setVec3("uFillDir",     m_fillDir.normalized());
-        m_phong.setVec3("uFillColor",   m_fillColor);
-        m_phong.setFloat("uAlpha",      1.0f);
-
+    if (bindPhongSurfacePass(model, view, proj, normalMat, objColor, camPos, 1.0f)) {
         mesh->drawTriangles();
         m_phong.release();
     }
@@ -986,14 +991,11 @@ TopoDS_Face Renderer::buildFaceFromTriangles(Body* body, const std::vector<int>&
 #endif
 
 // ── Preview render state helpers ─────────────────────────────────────────────
-// FR-001, FR-002: Preview must show camera-facing surfaces only.
-// Setup translucent ghost rendering with back-face culling enabled.
+// Setup translucent ghost rendering without persistent culling side effects.
 void Renderer::setupPreviewRenderState()
 {
     glDepthMask(GL_FALSE);       // No depth writes (ghost effect)
-    glEnable(GL_CULL_FACE);      // Enable back-face culling (FIX: was disabled)
-    glCullFace(GL_BACK);         // Cull back faces
-    glFrontFace(GL_CCW);         // Counter-clockwise winding is front-facing
+    glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
@@ -1002,7 +1004,7 @@ void Renderer::setupPreviewRenderState()
 void Renderer::restoreDefaultRenderState()
 {
     glDepthMask(GL_TRUE);        // Re-enable depth writes
-    glEnable(GL_CULL_FACE);      // Keep culling enabled (default state)
+    glDisable(GL_CULL_FACE);
 }
 
 } // namespace elcad
