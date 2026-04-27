@@ -802,6 +802,43 @@ int Renderer::faceOrdinalForTriangle(Body* body, int triIndex)
 #endif
 }
 
+std::vector<int> Renderer::resolveFaceSelectionTriangles(Body* body, int startTri,
+                                                         float angleDeg, float distanceTol)
+{
+#ifndef ELCAD_HAVE_OCCT
+    Q_UNUSED(body) Q_UNUSED(startTri) Q_UNUSED(angleDeg) Q_UNUSED(distanceTol)
+    return {};
+#else
+    std::vector<int> result;
+    if (!body) return result;
+
+    MeshBuffer* mesh = getMeshBuffer(body);
+    if (!mesh || mesh->isEmpty()) return result;
+
+    const int triCount = mesh->triangleCount() / 3;
+    if (startTri < 0 || startTri >= triCount) return result;
+
+    const int faceOrd = mesh->faceOrdinalForTriangle(startTri);
+    if (faceOrd >= 0) {
+        result.reserve(8);
+        for (int tri = 0; tri < triCount; ++tri) {
+            if (mesh->faceOrdinalForTriangle(tri) == faceOrd)
+                result.push_back(tri);
+        }
+        if (!result.empty()) {
+            LOG_DEBUG("resolveFaceSelectionTriangles: body id={} tri={} faceOrd={} resolved {} triangles",
+                      body->id(), startTri, faceOrd, result.size());
+            return result;
+        }
+    }
+
+    result = expandFaceSelection(body, startTri, angleDeg, distanceTol);
+    LOG_DEBUG("resolveFaceSelectionTriangles: body id={} tri={} fell back to mesh expansion -> {} triangles",
+              body->id(), startTri, result.size());
+    return result;
+#endif
+}
+
 QVector3D Renderer::triangleNormal(Body* body, int triIndex)
 {
     if (!body) return {0, 1, 0};

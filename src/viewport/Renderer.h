@@ -60,6 +60,12 @@ public:
     // Return the face ordinal (0-based) for a given triangle index in a body, or -1 if unknown
     int faceOrdinalForTriangle(Body* body, int triIndex);
 
+    // Resolve the triangles belonging to the selected face region. Prefer the exact
+    // OCCT face ordinal mapping when available and fall back to mesh-based expansion.
+    std::vector<int> resolveFaceSelectionTriangles(Body* body, int startTri,
+                                                   float angleDeg = 10.0f,
+                                                   float distanceTol = 1e-3f);
+
     // Expand a clicked triangle into a connected coplanar set. Returns triangle indices.
     std::vector<int> expandFaceSelection(Body* body, int startTri, float angleDeg = 10.0f, float distanceTol = 1e-3f);
 

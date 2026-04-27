@@ -13,7 +13,7 @@ Validate that the current Git branch follows the expected feature branch naming 
 
 - You may run the read-only commands and file inspections required by this workflow without asking for additional permission.
 - Treat invocation of this agent as approval for those routine actions within its documented scope.
-- Ask only when a required decision is ambiguous or when repository or runtime safety rules require confirmation.
+- Ask when a required decision is ambiguous, when repository or runtime safety rules require confirmation, or when explicit user permission is required for an otherwise in-scope action.
 - Repository-level safety constraints still override this autonomy.
 
 ## Prerequisites

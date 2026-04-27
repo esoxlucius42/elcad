@@ -1,12 +1,74 @@
 #include "sketch/SketchRenderer.h"
+#include "core/Logger.h"
 #include "sketch/Sketch.h"
 #include "sketch/SketchPlane.h"
 #include "sketch/SketchPicker.h"
 #include <QtMath>
 #include <QMatrix4x4>
 #include <algorithm>
+#include <numeric>
 
 namespace elcad {
+
+namespace {
+
+constexpr float kTriangulationEpsilon = 1e-5f;
+
+float signedPolygonArea(const std::vector<QVector2D>& polygon)
+{
+    float area = 0.0f;
+    const int count = static_cast<int>(polygon.size());
+    for (int i = 0; i < count; ++i) {
+        const QVector2D& a = polygon[i];
+        const QVector2D& b = polygon[(i + 1) % count];
+        area += a.x() * b.y() - b.x() * a.y();
+    }
+    return area * 0.5f;
+}
+
+float signedTriangleArea(QVector2D a, QVector2D b, QVector2D c)
+{
+    return ((b.x() - a.x()) * (c.y() - a.y()) - (b.y() - a.y()) * (c.x() - a.x())) * 0.5f;
+}
+
+bool pointsCoincide(QVector2D a, QVector2D b)
+{
+    return (a - b).lengthSquared() <= kTriangulationEpsilon * kTriangulationEpsilon;
+}
+
+bool pointInTriangle(QVector2D point, QVector2D a, QVector2D b, QVector2D c)
+{
+    const float area0 = signedTriangleArea(point, a, b);
+    const float area1 = signedTriangleArea(point, b, c);
+    const float area2 = signedTriangleArea(point, c, a);
+
+    const bool hasNegative = area0 < -kTriangulationEpsilon ||
+                             area1 < -kTriangulationEpsilon ||
+                             area2 < -kTriangulationEpsilon;
+    const bool hasPositive = area0 > kTriangulationEpsilon ||
+                             area1 > kTriangulationEpsilon ||
+                             area2 > kTriangulationEpsilon;
+    return !(hasNegative && hasPositive);
+}
+
+std::vector<QVector2D> sanitizePolygon(const std::vector<QVector2D>& polygon)
+{
+    std::vector<QVector2D> sanitized;
+    sanitized.reserve(polygon.size());
+
+    for (const QVector2D& point : polygon) {
+        if (!sanitized.empty() && pointsCoincide(sanitized.back(), point))
+            continue;
+        sanitized.push_back(point);
+    }
+
+    if (sanitized.size() >= 2 && pointsCoincide(sanitized.front(), sanitized.back()))
+        sanitized.pop_back();
+
+    return sanitized;
+}
+
+} // namespace
 
 static constexpr int kCircleSegments = 64;
 static constexpr float kCrosshairSize = 5.f;  // mm
@@ -223,7 +285,7 @@ void SketchRenderer::drawLines(const LineList& pts, QVector3D color,
 }
 
 void SketchRenderer::drawTriangles(const std::vector<QVector3D>& pts, QVector3D color, float alpha,
-                                    const QMatrix4x4& view, const QMatrix4x4& proj)
+                                     const QMatrix4x4& view, const QMatrix4x4& proj)
 {
     if (pts.empty() || !m_shader.isValid()) return;
 
@@ -253,6 +315,96 @@ void SketchRenderer::drawTriangles(const std::vector<QVector3D>& pts, QVector3D 
 
     m_shader.release();
     glBindVertexArray(0);
+}
+
+std::vector<QVector2D> SketchRenderer::triangulatePolygon(const std::vector<QVector2D>& polygon)
+{
+    std::vector<QVector2D> vertices = sanitizePolygon(polygon);
+    std::vector<QVector2D> triangles;
+    if (vertices.size() < 3)
+        return triangles;
+
+    const float polygonArea = signedPolygonArea(vertices);
+    if (std::abs(polygonArea) <= kTriangulationEpsilon)
+        return triangles;
+
+    const bool isCounterClockwise = polygonArea > 0.0f;
+    std::vector<int> indices(vertices.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    triangles.reserve((vertices.size() - 2) * 3);
+
+    int guard = 0;
+    while (indices.size() > 3 && guard < 1024) {
+        bool clippedEar = false;
+        const int count = static_cast<int>(indices.size());
+
+        for (int i = 0; i < count; ++i) {
+            const int prevIndex = indices[(i + count - 1) % count];
+            const int currIndex = indices[i];
+            const int nextIndex = indices[(i + 1) % count];
+
+            const QVector2D& prev = vertices[prevIndex];
+            const QVector2D& curr = vertices[currIndex];
+            const QVector2D& next = vertices[nextIndex];
+
+            const float turn = signedTriangleArea(prev, curr, next);
+            if (std::abs(turn) <= kTriangulationEpsilon)
+                continue;
+            if (isCounterClockwise ? (turn < 0.0f) : (turn > 0.0f))
+                continue;
+
+            bool containsOtherVertex = false;
+            for (int otherIndex : indices) {
+                if (otherIndex == prevIndex || otherIndex == currIndex || otherIndex == nextIndex)
+                    continue;
+                if (pointInTriangle(vertices[otherIndex], prev, curr, next)) {
+                    containsOtherVertex = true;
+                    break;
+                }
+            }
+            if (containsOtherVertex)
+                continue;
+
+            if (isCounterClockwise) {
+                triangles.push_back(prev);
+                triangles.push_back(curr);
+                triangles.push_back(next);
+            } else {
+                triangles.push_back(next);
+                triangles.push_back(curr);
+                triangles.push_back(prev);
+            }
+
+            indices.erase(indices.begin() + i);
+            clippedEar = true;
+            break;
+        }
+
+        if (!clippedEar) {
+            LOG_WARN("SketchRenderer::triangulatePolygon: failed to ear-clip polygon with {} vertices",
+                     vertices.size());
+            return {};
+        }
+
+        ++guard;
+    }
+
+    if (indices.size() == 3) {
+        const QVector2D& a = vertices[indices[0]];
+        const QVector2D& b = vertices[indices[1]];
+        const QVector2D& c = vertices[indices[2]];
+        if (isCounterClockwise) {
+            triangles.push_back(a);
+            triangles.push_back(b);
+            triangles.push_back(c);
+        } else {
+            triangles.push_back(c);
+            triangles.push_back(b);
+            triangles.push_back(a);
+        }
+    }
+
+    return triangles;
 }
 
 // ── renderInactive ────────────────────────────────────────────────────────────
@@ -345,19 +497,10 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
         bool isSel = isAreaSelected(loop.loopIndex);
         if (!isHov && !isSel) continue;
 
-        // Fan-triangulate from centroid.
-        QVector2D centroid{};
-        for (const auto& v : poly) centroid += v;
-        centroid /= static_cast<float>(poly.size());
-
         auto& fillOut = isSel ? selectedFill : hoveredFill;
-        for (int j = 0; j < static_cast<int>(poly.size()); ++j) {
-            QVector2D a = poly[j];
-            QVector2D b = poly[(j + 1) % static_cast<int>(poly.size())];
-            fillOut.push_back(plane.to3D(centroid));
-            fillOut.push_back(plane.to3D(a));
-            fillOut.push_back(plane.to3D(b));
-        }
+        const auto loopTriangles = triangulatePolygon(poly);
+        for (const QVector2D& vertex : loopTriangles)
+            fillOut.push_back(plane.to3D(vertex));
 
         for (int childLoopIndex : loop.childLoopIndices) {
             if (childLoopIndex < 0 || childLoopIndex >= static_cast<int>(topology.size()))
@@ -367,17 +510,9 @@ void SketchRenderer::renderInactive(const Sketch& sketch,
             if (childLoop.isSelectableMaterial || childLoop.polygon.size() < 3)
                 continue;
 
-            QVector2D ic{};
-            for (const auto& v : childLoop.polygon) ic += v;
-            ic /= static_cast<float>(childLoop.polygon.size());
-            int jn = static_cast<int>(childLoop.polygon.size());
-            for (int k = 0; k < jn; ++k) {
-                QVector2D a = childLoop.polygon[k];
-                QVector2D b = childLoop.polygon[(k + 1) % jn];
-                fillHoles.push_back(plane.to3D(ic));
-                fillHoles.push_back(plane.to3D(a));
-                fillHoles.push_back(plane.to3D(b));
-            }
+            const auto holeTriangles = triangulatePolygon(childLoop.polygon);
+            for (const QVector2D& vertex : holeTriangles)
+                fillHoles.push_back(plane.to3D(vertex));
         }
     }
 

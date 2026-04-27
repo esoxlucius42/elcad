@@ -486,14 +486,13 @@ void ViewportWidget::handlePickClick(QPoint pos, bool addToSelection)
         return;
     }
 
-    // If the hit is a face, expand to connected coplanar triangles
+    // If the hit is a face, resolve the bounded face region used by highlight and extrude.
     if (hitItem.type == Document::SelectedItem::Type::Face) {
         Body* b = m_document->bodyById(hitItem.bodyId);
         if (b) {
-            // Use renderer to expand selection
             float angleDeg = 10.0f; // increased per-edge threshold for curved surfaces
             float distanceTol = 1e-3f;
-            auto tris = m_renderer.expandFaceSelection(b, hitItem.index, angleDeg, distanceTol);
+            auto tris = m_renderer.resolveFaceSelectionTriangles(b, hitItem.index, angleDeg, distanceTol);
 
             std::vector<Document::SelectedItem> faceItems;
             faceItems.reserve(tris.size());

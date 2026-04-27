@@ -1,6 +1,17 @@
 #include "SketchIntersectionFixtures.h"
 
 #include "sketch/SketchPlane.h"
+#ifdef ELCAD_HAVE_OCCT
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
+#include <QSurfaceFormat>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopoDS.hxx>
+#include <BRepCheck_Analyzer.hxx>
+#endif
 #include <cmath>
 #include <sstream>
 #include <stdexcept>
@@ -139,5 +150,69 @@ void requireNear(float actual, float expected, float tolerance, const std::strin
     stream << message << " (expected " << expected << ", got " << actual << ")";
     throw std::runtime_error(stream.str());
 }
+
+#ifdef ELCAD_HAVE_OCCT
+ScopedOffscreenGlContext::ScopedOffscreenGlContext()
+{
+    QSurfaceFormat format;
+    format.setRenderableType(QSurfaceFormat::OpenGL);
+    format.setVersion(3, 3);
+    format.setProfile(QSurfaceFormat::CoreProfile);
+    format.setDepthBufferSize(24);
+
+    m_surface = std::make_unique<QOffscreenSurface>();
+    m_surface->setFormat(format);
+    m_surface->create();
+    if (!m_surface->isValid())
+        throw std::runtime_error("offscreen GL surface should be valid");
+
+    m_context = std::make_unique<QOpenGLContext>();
+    m_context->setFormat(m_surface->requestedFormat());
+    if (!m_context->create())
+        throw std::runtime_error("offscreen GL context creation should succeed");
+    if (!m_context->makeCurrent(m_surface.get()))
+        throw std::runtime_error("offscreen GL context should become current");
+
+    m_valid = true;
+}
+
+ScopedOffscreenGlContext::~ScopedOffscreenGlContext()
+{
+    if (m_context)
+        m_context->doneCurrent();
+}
+
+std::unique_ptr<Document> makeSingleBodyDocument(const TopoDS_Shape& shape, const QString& name)
+{
+    auto doc = std::make_unique<Document>();
+    Body* body = doc->addBody(name);
+    body->setShape(shape);
+    return doc;
+}
+
+TopoDS_Face faceByOrdinal(const TopoDS_Shape& shape, int faceOrdinal)
+{
+    int index = 0;
+    for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next(), ++index) {
+        if (index == faceOrdinal)
+            return TopoDS::Face(exp.Current());
+    }
+    return TopoDS_Face{};
+}
+
+double faceArea(const TopoDS_Face& face)
+{
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(face, props);
+    return props.Mass();
+}
+
+double solidVolume(const TopoDS_Shape& shape)
+{
+    GProp_GProps props;
+    BRepGProp::VolumeProperties(shape, props);
+    return props.Mass();
+}
+#endif
 
 } // namespace elcad::test

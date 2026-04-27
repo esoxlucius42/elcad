@@ -21,6 +21,10 @@ public:
 
     void initialize();
 
+    // Triangulate a simple 2D polygon into a triangle list for sketch area fills.
+    // Returns vertices in triplets suitable for GL_TRIANGLES.
+    static std::vector<QVector2D> triangulatePolygon(const std::vector<QVector2D>& polygon);
+
     // Render sketch entities. previewEntities are drawn in cyan (in-progress tool).
     // snapResult (optional): if not null, draws a crosshair + type indicator at the snap point.
     void render(const Sketch&                    sketch,

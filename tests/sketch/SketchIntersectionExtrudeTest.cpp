@@ -2,13 +2,13 @@
 
 #include "sketch/ExtrudeOperation.h"
 #include "sketch/SketchToWire.h"
+#include "viewport/Renderer.h"
 
 #include <sstream>
 
 #ifdef ELCAD_HAVE_OCCT
-#include <BRepGProp.hxx>
 #include <BRepCheck_Analyzer.hxx>
-#include <GProp_GProps.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
 #endif
 
 namespace elcad::test {
@@ -29,22 +29,6 @@ std::string describeBoundarySegments(const std::vector<SketchBoundarySegment>& s
     }
     return stream.str();
 }
-
-#ifdef ELCAD_HAVE_OCCT
-double faceArea(const TopoDS_Face& face)
-{
-    GProp_GProps props;
-    BRepGProp::SurfaceProperties(face, props);
-    return props.Mass();
-}
-
-double solidVolume(const TopoDS_Shape& shape)
-{
-    GProp_GProps props;
-    BRepGProp::VolumeProperties(shape, props);
-    return props.Mass();
-}
-#endif
 
 void verifyResolvedProfile(const Sketch& sketch,
                            const char* label,
@@ -226,6 +210,45 @@ void runSketchIntersectionExtrudeTests()
                                            {findSelectableRegionIndex(overlapTopology, QVector2D(15.0f, 5.0f)),
                                             findSelectableRegionIndex(overlapTopology, QVector2D(-5.0f, 5.0f))},
                                            findSelectableRegionIndex(overlapTopology, QVector2D(3.0f, 3.0f)));
+
+#ifdef ELCAD_HAVE_OCCT
+    ScopedOffscreenGlContext glContext;
+    require(glContext.isValid(), "offscreen GL context should be available for extrude face-resolution regression");
+
+    Renderer renderer;
+    auto bodyDoc = makeSingleBodyDocument(BRepPrimAPI_MakeBox(40.0, 30.0, 20.0).Shape(), "PreviewBox");
+    Body* body = bodyDoc->bodyByIndex(0);
+    require(body && body->hasShape(), "preview regression should expose a valid OCCT body");
+
+    const auto initialTriangles = renderer.resolveFaceSelectionTriangles(body, 0);
+    const auto repeatedTriangles = renderer.resolveFaceSelectionTriangles(body, 0);
+    require(initialTriangles == repeatedTriangles,
+            "selected face resolution should remain stable across repeated preview recomputes");
+
+    const int faceOrd = renderer.faceOrdinalForTriangle(body, 0);
+    require(faceOrd >= 0, "preview regression seed triangle should resolve to a face ordinal");
+
+    const TopoDS_Face directFace = faceByOrdinal(body->shape(), faceOrd);
+    const TopoDS_Face reconstructedFace = renderer.buildFaceFromTriangles(body, repeatedTriangles);
+    require(!directFace.IsNull() && !reconstructedFace.IsNull(),
+            "preview regression should resolve both direct and reconstructed extrusion faces");
+
+    for (double distance : {5.0, 12.0}) {
+        ExtrudeParams params;
+        params.distance = distance;
+        params.mode = 0;
+        params.symmetric = false;
+
+        const auto directResult = ExtrudeOperation::extrudeFace(directFace, params);
+        const auto reconstructedResult = ExtrudeOperation::extrudeFace(reconstructedFace, params);
+        require(directResult.success, "direct face extrusion for preview regression should succeed");
+        require(reconstructedResult.success, "reconstructed face extrusion for preview regression should succeed");
+        requireNear(static_cast<float>(solidVolume(reconstructedResult.shape)),
+                    static_cast<float>(solidVolume(directResult.shape)),
+                    0.5f,
+                    "preview-aligned face reconstruction should preserve extrusion volume across parameter changes");
+    }
+#endif
 }
 
 } // namespace elcad::test

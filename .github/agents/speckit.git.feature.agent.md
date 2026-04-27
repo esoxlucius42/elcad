@@ -22,7 +22,7 @@ You **MUST** consider the user input before proceeding (if not empty).
 - You may run the commands required by this workflow without asking for additional permission, but only when those commands are allowed by the active repository and runtime policies.
 - Treat invocation of this agent as approval for routine command execution within its documented scope.
 - Autonomous branch creation and branch switching are allowed for this agent when the workflow requires them.
-- Ask only when a required decision is ambiguous or when a safety rule blocks the normal workflow.
+- Ask when a required decision is ambiguous, when a safety rule blocks the normal workflow, or when explicit user permission is required for an otherwise in-scope action.
 
 ## Environment Variable Override
 
