@@ -5,6 +5,12 @@
 **Status**: Draft  
 **Input**: User description: "bugs in sketch mode: user draws rectangle and then a circle whose center is one of rects corner points. circle intersects rect so that 1/4 of circle area is inside rect. user can select rectangle area outside circle and the 1/4 circle area inside the rectangle, but cannot select the remaining 3/4 circle area outside the rectangle. Selectable areas also cannot be extruded because the selected sketch face is not treated as a closed profile."
 
+## Clarifications
+
+### Session 2026-04-26
+
+- Q: Which sketch geometry combinations are in scope for overlap-region detection and extrusion? → A: Any sketch geometry combination is in scope, including open/partial curves if they enclose an area.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Select every bounded overlap region (Priority: P1)
@@ -71,18 +77,19 @@ As a sketch user, I want region availability to update when intersecting shapes 
 
 ### Functional Requirements
 
-- **FR-001**: The system MUST detect every bounded sketch region created when two or more closed sketch shapes intersect.
+- **FR-001**: The system MUST detect every bounded sketch region created when any sketch geometry combination encloses an area through intersection or overlap, including cases where open or partial curves participate in a closed boundary.
 - **FR-002**: The system MUST make each detected bounded sketch region independently selectable, including regions that lie mostly outside one of the original shapes.
 - **FR-003**: The system MUST treat every selectable sketch region as a complete closed profile for downstream solid-creation tools.
 - **FR-004**: The system MUST prevent open or unbounded areas from being exposed as selectable sketch faces.
 - **FR-005**: The system MUST refresh the set of selectable sketch regions whenever sketch edits change intersections or remove them.
 - **FR-006**: The system MUST preserve existing selection and extrusion behavior for sketches containing a single non-overlapping closed shape.
-- **FR-007**: The system MUST handle overlaps between supported closed sketch primitives consistently, regardless of which shape was drawn first.
+- **FR-007**: The system MUST handle region detection and extrusion consistently for any supported sketch geometry combination that forms a bounded region, regardless of which entities were drawn first.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Closed Sketch Shape**: A user-drawn planar shape intended to bound an area, such as a rectangle or circle.
-- **Intersection Region**: A bounded area produced by one or more overlapping closed sketch shapes.
+- **Closed Boundary Path**: A complete planar loop formed by one or more sketch entities, including combinations that use open or partial curves as long as the overall boundary is closed.
+- **Intersection Region**: A bounded area produced when one or more sketch entities overlap or combine to form a closed planar boundary.
 - **Selectable Sketch Face**: A bounded sketch region the user can select and pass to downstream operations such as extrusion.
 
 ## Success Criteria *(mandatory)*
@@ -97,6 +104,6 @@ As a sketch user, I want region availability to update when intersecting shapes 
 ## Assumptions
 
 - This feature applies to planar sketch mode workflows that already support selecting closed sketch faces and extruding them.
-- Overlapping closed shapes are expected to be partitioned automatically into all valid bounded regions without requiring extra cleanup by the user.
+- Sketch geometry that forms closed planar boundaries is expected to be partitioned automatically into all valid bounded regions without requiring extra cleanup by the user.
 - The scope of this feature is limited to sketch region detection, selection, and profile validity for extrusion; it does not change the behavior of completed solids after extrusion.
-- Existing sketch tools continue to define which primitive shapes are supported in this workflow.
+- Any supported sketch entity combination is in scope when the resulting geometry forms a bounded planar region, even if some participating entities are individually open or partial curves.

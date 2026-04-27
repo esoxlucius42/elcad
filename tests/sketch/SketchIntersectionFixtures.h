@@ -12,6 +12,7 @@ namespace elcad::test {
 
 std::unique_ptr<Sketch> makeRectangleCircleOverlapSketch();
 std::unique_ptr<Sketch> makeNestedRectangleCircleSketch();
+std::unique_ptr<Sketch> makeClockwiseArcSegmentSketch();
 std::unique_ptr<Sketch> makeTangentRectangleCircleSketch();
 std::unique_ptr<Sketch> makeRectangleWithDuplicateEdgeSketch();
 std::unique_ptr<Sketch> makeOpenRectangleSketch();

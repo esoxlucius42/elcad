@@ -136,6 +136,77 @@ static SketchBoundarySegment reverseBoundary(const SketchBoundarySegment& bounda
     return reversed;
 }
 
+static bool canMergeLineBoundaries(const SketchBoundarySegment& lhs,
+                                   const SketchBoundarySegment& rhs,
+                                   float tolerance)
+{
+    const QVector2D lhsDir = lhs.end - lhs.start;
+    const QVector2D rhsDir = rhs.end - rhs.start;
+    if (lhsDir.lengthSquared() <= tolerance * tolerance ||
+        rhsDir.lengthSquared() <= tolerance * tolerance) {
+        return false;
+    }
+
+    const float cross = lhsDir.x() * rhsDir.y() - lhsDir.y() * rhsDir.x();
+    if (std::abs(cross) > tolerance * (lhsDir.length() + rhsDir.length()))
+        return false;
+
+    if (QVector2D::dotProduct(lhsDir, rhsDir) <= 0.0f)
+        return false;
+
+    const QVector2D rhsStartOffset = rhs.start - lhs.start;
+    const float lhsOffsetCross = lhsDir.x() * rhsStartOffset.y() - lhsDir.y() * rhsStartOffset.x();
+    return std::abs(lhsOffsetCross) <= tolerance * lhsDir.length();
+}
+
+static bool canMergeArcBoundaries(const SketchBoundarySegment& lhs,
+                                  const SketchBoundarySegment& rhs,
+                                  float tolerance)
+{
+    return pointsAlmostEqual(lhs.center, rhs.center, tolerance) &&
+           std::abs(lhs.radius - rhs.radius) <= tolerance &&
+           lhs.counterClockwise == rhs.counterClockwise;
+}
+
+static std::vector<SketchBoundarySegment> mergeBoundarySegments(
+    const std::vector<SketchBoundarySegment>& segments,
+    float tolerance = 1e-3f)
+{
+    std::vector<SketchBoundarySegment> merged;
+    merged.reserve(segments.size());
+
+    for (const auto& segment : segments) {
+        if (merged.empty()) {
+            merged.push_back(segment);
+            continue;
+        }
+
+        auto& current = merged.back();
+        const bool sameSource = current.sourceEntityId == segment.sourceEntityId;
+        const bool contiguous = pointsAlmostEqual(current.end, segment.start, tolerance);
+        const bool mergeableLine =
+            current.type == SketchEntity::Line &&
+            segment.type == SketchEntity::Line &&
+            canMergeLineBoundaries(current, segment, tolerance);
+        const bool mergeableArc =
+            current.type == SketchEntity::Arc &&
+            segment.type == SketchEntity::Arc &&
+            canMergeArcBoundaries(current, segment, tolerance);
+
+        if (!sameSource || !contiguous || (!mergeableLine && !mergeableArc)) {
+            merged.push_back(segment);
+            continue;
+        }
+
+        current.end = segment.end;
+        if (mergeableArc && pointsAlmostEqual(current.start, current.end, tolerance)) {
+            current.type = SketchEntity::Circle;
+        }
+    }
+
+    return merged;
+}
+
 // ── SketchPicker::pick ────────────────────────────────────────────────────────
 
 SketchHit SketchPicker::pick(const QVector3D& rayOrigin,
@@ -324,6 +395,57 @@ std::vector<SketchPicker::FlatSeg> SketchPicker::flattenSegments(const Sketch& s
     }
     if (lines.empty() && circles.empty()) return {};
 
+    auto normalizeAngle = [](float angle) -> float {
+        float normalized = std::fmod(angle, 360.0f);
+        if (normalized < 0.0f)
+            normalized += 360.0f;
+        return normalized;
+    };
+
+    auto isFullCircle = [](const RawCircle& circle) -> bool {
+        return std::abs(circle.endDeg - circle.startDeg - 360.f) < 1e-3f ||
+               std::abs(circle.endDeg - circle.startDeg)          < 1e-3f;
+    };
+
+    auto signedSpan = [&](const RawCircle& circle) -> float {
+        return isFullCircle(circle) ? 360.0f : (circle.endDeg - circle.startDeg);
+    };
+
+    auto boundaryIsCounterClockwise = [&](const RawCircle& circle) -> bool {
+        return isFullCircle(circle) || signedSpan(circle) >= 0.0f;
+    };
+
+    auto angleProgress = [&](const RawCircle& circle, float angle, float* progressOut) -> bool {
+        const float start = normalizeAngle(circle.startDeg);
+        const float ang = normalizeAngle(angle);
+
+        if (isFullCircle(circle)) {
+            float delta = normalizeAngle(ang - start);
+            if (progressOut)
+                *progressOut = delta;
+            return true;
+        }
+
+        const float span = signedSpan(circle);
+        if (span > 0.0f) {
+            const float delta = normalizeAngle(ang - start);
+            if (delta <= span + 0.01f) {
+                if (progressOut)
+                    *progressOut = delta;
+                return true;
+            }
+            return false;
+        }
+
+        const float delta = normalizeAngle(start - ang);
+        if (delta <= -span + 0.01f) {
+            if (progressOut)
+                *progressOut = delta;
+            return true;
+        }
+        return false;
+    };
+
     // ── Step 2: Collect split t-values (lines) and split angles (circles) ─────
     std::vector<std::vector<float>> tSplits(lines.size(), {0.f, 1.f});
     std::vector<std::vector<float>> angleSplits(circles.size());
@@ -386,22 +508,17 @@ std::vector<SketchPicker::FlatSeg> SketchPicker::flattenSegments(const Sketch& s
             float sqrtD = std::sqrt(std::max(0.f, disc));
             float len   = std::sqrt(ac);
             float tMin  = snapTol / len;
-            bool  full  = (std::abs(C.endDeg - C.startDeg - 360.f) < 1e-3f ||
-                           std::abs(C.endDeg - C.startDeg)          < 1e-3f);
+            bool  full  = isFullCircle(C);
             for (int s : {-1, 1}) {
                 float t = (-bc + s * sqrtD) / (2.f * ac);
                 if (t <= tMin || t >= 1.f - tMin) continue;
                 QVector2D pt  = L.a + d * t;
                 float ang = qRadiansToDegrees(
                     std::atan2(pt.y() - C.center.y(), pt.x() - C.center.x()));
-                if (ang < 0.f) ang += 360.f;
+                ang = normalizeAngle(ang);
                 // Filter to arc's angular range.
-                if (!full) {
-                    float s2 = C.startDeg, e2 = C.endDeg;
-                    bool inRange = (s2 <= e2) ? (ang >= s2 - 0.01f && ang <= e2 + 0.01f)
-                                              : (ang >= s2 - 0.01f || ang <= e2 + 0.01f);
-                    if (!inRange) continue;
-                }
+                float progress = 0.0f;
+                if (!full && !angleProgress(C, ang, &progress)) continue;
                 tSplits[li].push_back(t);
                 angleSplits[ci].push_back(ang);
             }
@@ -432,24 +549,37 @@ std::vector<SketchPicker::FlatSeg> SketchPicker::flattenSegments(const Sketch& s
     // Circles / Arcs — polygon approximation with extra vertices at intersections
     for (int j = 0; j < static_cast<int>(circles.size()); ++j) {
         const auto& C    = circles[j];
-        bool        full = (std::abs(C.endDeg - C.startDeg - 360.f) < 1e-3f ||
-                            std::abs(C.endDeg - C.startDeg)          < 1e-3f);
+        bool        full = isFullCircle(C);
+        const float span = signedSpan(C);
+        const bool  counterClockwise = boundaryIsCounterClockwise(C);
 
         std::vector<float> angles;
         if (full) {
             for (int k = 0; k < kArcSegs; ++k)
-                angles.push_back(360.f * k / kArcSegs);
+                angles.push_back(normalizeAngle(C.startDeg + 360.f * k / kArcSegs));
         } else {
-            float span = C.endDeg - C.startDeg;
             for (int k = 0; k <= kArcSegs; ++k)
-                angles.push_back(C.startDeg + span * k / kArcSegs);
+                angles.push_back(normalizeAngle(C.startDeg + span * k / kArcSegs));
         }
         for (float a : angleSplits[j])
-            angles.push_back(a);
+            angles.push_back(normalizeAngle(a));
 
-        std::sort(angles.begin(), angles.end());
+        std::sort(angles.begin(), angles.end(),
+                  [&](float lhs, float rhs) {
+                      float lhsProgress = 0.0f;
+                      float rhsProgress = 0.0f;
+                      angleProgress(C, lhs, &lhsProgress);
+                      angleProgress(C, rhs, &rhsProgress);
+                      return lhsProgress < rhsProgress;
+                  });
         angles.erase(std::unique(angles.begin(), angles.end(),
-                                 [](float x, float y){ return std::abs(x - y) < 0.01f; }),
+                                 [&](float x, float y){
+                                     float xProgress = 0.0f;
+                                     float yProgress = 0.0f;
+                                     angleProgress(C, x, &xProgress);
+                                     angleProgress(C, y, &yProgress);
+                                     return std::abs(xProgress - yProgress) < 0.01f;
+                                 }),
                      angles.end());
 
         auto ptAt = [&](float deg) -> QVector2D {
@@ -463,7 +593,7 @@ std::vector<SketchPicker::FlatSeg> SketchPicker::flattenSegments(const Sketch& s
             result.push_back({start,
                               end,
                               C.entityId,
-                              makeArcBoundary(C.center, C.r, start, end, C.entityId, true)});
+                              makeArcBoundary(C.center, C.r, start, end, C.entityId, counterClockwise)});
         }
         if (full) { // close the loop
             const QVector2D start = ptAt(angles.back());
@@ -471,7 +601,7 @@ std::vector<SketchPicker::FlatSeg> SketchPicker::flattenSegments(const Sketch& s
             result.push_back({start,
                               end,
                               C.entityId,
-                              makeArcBoundary(C.center, C.r, start, end, C.entityId, true)});
+                              makeArcBoundary(C.center, C.r, start, end, C.entityId, counterClockwise)});
         }
     }
 
@@ -873,6 +1003,8 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
             return {};
         }
 
+        profile.boundarySegments = mergeBoundarySegments(profile.boundarySegments);
+
         for (int childLoopIndex : loop.childLoopIndices) {
             if (childLoopIndex < 0 || childLoopIndex >= static_cast<int>(topology.size()))
                 continue;
@@ -909,6 +1041,8 @@ std::vector<SelectedSketchProfile> SketchPicker::resolveSelectedProfiles(
                          childLoopIndex, loopIndex);
                 return {};
             }
+
+            hole.boundarySegments = mergeBoundarySegments(hole.boundarySegments);
 
             profile.holes.push_back(std::move(hole));
         }

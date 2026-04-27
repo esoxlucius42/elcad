@@ -93,6 +93,13 @@ private:
     void drawBody(Body* body, const QMatrix4x4& view, const QMatrix4x4& proj,
                   const QVector3D& camPos, Document* doc);
     MeshBuffer* getMeshBuffer(Body* body);
+    bool bindPhongSurfacePass(const QMatrix4x4& model,
+                              const QMatrix4x4& view,
+                              const QMatrix4x4& proj,
+                              const QMatrix3x3& normalMat,
+                              const QVector3D& objectColor,
+                              const QVector3D& camPos,
+                              float alpha);
 
     // Preview rendering helpers (FR-001, FR-002: camera-facing surfaces only)
     void setupPreviewRenderState();
