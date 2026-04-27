@@ -28,8 +28,8 @@ and automated tests when introduced
 **Performance Goals**: Interactive viewport behavior and acceptable modeling /
 import-export latency for the affected workflow  
 **Constraints**: Millimetre units, `document/Document` ownership boundaries,
-`ELCAD_HAVE_OCCT` guards, no autonomous commits or branch creation, stay on
-`main` unless explicitly directed otherwise  
+`ELCAD_HAVE_OCCT` guards, no autonomous commits, pushes, or tags unless
+explicitly directed otherwise  
 **Scale/Scope**: Sketching, modeling, viewport, import/export, and supporting
 desktop workflows within elcad
 
@@ -41,9 +41,9 @@ desktop workflows within elcad
 - `document/Document`, undo, Qt signal/slot, and viewport boundaries respected.
 - Native stack constraints and dependency changes are justified.
 - Verification evidence is defined (automated and/or manual with concrete steps).
-- Copilot/Spec Kit guidance uses custom agents, excludes autonomous commits and
-  branch creation, and keeps agent work on `main` unless explicitly directed
-  otherwise.
+- Copilot/Spec Kit guidance uses custom agents, excludes autonomous commits,
+  pushes, and tags, and allows branch creation/switching when the workflow
+  requires it.
 
 ## Project Structure
 

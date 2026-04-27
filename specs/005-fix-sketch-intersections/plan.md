@@ -16,7 +16,7 @@ Fix completed-sketch region derivation so every bounded planar region formed by 
 **Target Platform**: Linux desktop  
 **Project Type**: Native desktop CAD application  
 **Performance Goals**: Keep completed-sketch picking, highlighting, and extrusion setup interactive for common sketches; preserve existing single-shape selection/extrusion behavior  
-**Constraints**: Millimetre units; `document/Document` remains the mutation owner; UI updates flow through Qt signals/slots; OCCT-specific behavior stays behind `#ifdef ELCAD_HAVE_OCCT`; no autonomous branch creation, switching, commits, pushes, or tags; user explicitly required planning in-place on `005-fix-sketch-intersections`; in-scope geometry is any supported sketch entity combination that forms a bounded planar region, including open/partial curves when they participate in a closed boundary  
+**Constraints**: Millimetre units; `document/Document` remains the mutation owner; UI updates flow through Qt signals/slots; OCCT-specific behavior stays behind `#ifdef ELCAD_HAVE_OCCT`; no autonomous commits, pushes, or tags; in-scope geometry is any supported sketch entity combination that forms a bounded planar region, including open/partial curves when they participate in a closed boundary  
 **Scale/Scope**: `src/sketch/`, `src/document/`, `src/ui/`, `src/viewport/`, `tests/sketch/`, `CMakeLists.txt`, and feature documentation for bounded-region selection, extrusion validity, and sketch-refresh regressions
 
 ## Constitution Check
@@ -29,7 +29,7 @@ Fix completed-sketch region derivation so every bounded planar region formed by 
 - **PASS — Document-Centered Architecture**: Document ownership stays with `document/Document`; region derivation/profile resolution remains in sketch-domain code; rendering/highlight work stays under `viewport/` and sketch rendering.
 - **PASS — Buildable Native Stack Discipline**: No new dependencies are planned; work remains in C++17/CMake/Qt6/OpenGL/OCCT patterns with `ELCAD_HAVE_OCCT` guards retained.
 - **PASS — Verification Evidence Required**: Automated regression coverage already exists for selection, extrusion, and refresh flows, and `quickstart.md` defines manual validation/evidence capture for overlap, edit-refresh, tangent, open, and duplicate-boundary cases.
-- **PASS — Spec Kit Alignment & Human-Controlled Delivery**: Planning uses the repository's custom-agent guidance, keeps git auto-commit disabled, and does not create/switch branches or write git history autonomously. The user explicitly requested work on `005-fix-sketch-intersections`, so remaining on that branch is justified.
+- **PASS — Spec Kit Alignment & Human-Controlled Delivery**: Planning uses the repository's custom-agent guidance, keeps git auto-commit disabled, and does not write commits, pushes, or tags autonomously.
 
 ### Post-Design Re-Check
 

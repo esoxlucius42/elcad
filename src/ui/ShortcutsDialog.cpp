@@ -37,6 +37,7 @@ ShortcutsDialog::ShortcutsDialog(QWidget* parent)
         { "S",            "Gizmo: Scale"             },
         // Sketch / Selection
         { "Esc",          "Exit sketch / Clear selection" },
+        { "Space",        "Clear selection"             },
     };
 
     auto* layout = new QVBoxLayout(this);

@@ -15,6 +15,42 @@ Document::Document(QObject* parent)
 
 Document::~Document() = default;
 
+namespace {
+
+bool isSketchSelectionType(Document::SelectedItem::Type type)
+{
+    return type == Document::SelectedItem::Type::SketchPoint
+        || type == Document::SelectedItem::Type::SketchLine
+        || type == Document::SelectedItem::Type::SketchArea;
+}
+
+bool sketchHasSelectedEntities(const Sketch* sketch)
+{
+    if (!sketch)
+        return false;
+
+    return std::any_of(sketch->entities().begin(),
+                       sketch->entities().end(),
+                       [](const auto& entity) {
+                           return entity && entity->selected;
+                       });
+}
+
+std::vector<Document::SelectedItem> dedupeSelectionItems(const std::vector<Document::SelectedItem>& items)
+{
+    std::vector<Document::SelectedItem> deduped;
+    deduped.reserve(items.size());
+
+    for (const auto& item : items) {
+        if (std::find(deduped.begin(), deduped.end(), item) == deduped.end())
+            deduped.push_back(item);
+    }
+
+    return deduped;
+}
+
+} // namespace
+
 Body* Document::addBody(const QString& name)
 {
     auto body = std::make_unique<Body>(name);
@@ -86,67 +122,105 @@ int Document::bodyCount() const
 
 void Document::clearSelection()
 {
-    bool changed = false;
-    if (!m_selection.empty()) {
-        m_selection.clear();
+    bool changed = !m_selection.empty();
+    m_selection.clear();
+
+    if (m_activeSketch && sketchHasSelectedEntities(m_activeSketch.get())) {
+        m_activeSketch->clearSelection();
         changed = true;
     }
 
-    // Keep backwards compatibility: clear body->selected flags
-    for (auto& b : m_bodies) {
-        if (b->selected()) { b->setSelected(false); changed = true; }
+    for (const auto& sketch : m_sketches) {
+        if (sketchHasSelectedEntities(sketch.get())) {
+            sketch->clearSelection();
+            changed = true;
+        }
     }
 
-    if (changed) emit selectionChanged();
+    if (syncBodySelectionFlags())
+        changed = true;
+
+    if (changed)
+        emit selectionChanged();
+}
+
+void Document::setSelection(const std::vector<SelectedItem>& items)
+{
+    auto nextSelection = dedupeSelectionItems(items);
+    bool changed = nextSelection != m_selection;
+    m_selection = std::move(nextSelection);
+
+    if (syncBodySelectionFlags())
+        changed = true;
+
+    if (changed)
+        emit selectionChanged();
 }
 
 void Document::addSelection(const SelectedItem& it)
 {
-    if (isSelected(it)) return;
-    m_selection.push_back(it);
+    addSelections({it});
+}
 
-    // Only update body selection flags for body-related item types.
-    bool isSketchType = (it.type == SelectedItem::Type::SketchPoint ||
-                         it.type == SelectedItem::Type::SketchLine  ||
-                         it.type == SelectedItem::Type::SketchArea);
-    if (!isSketchType) {
-        if (Body* b = bodyById(it.bodyId)) b->setSelected(true);
+void Document::addSelections(const std::vector<SelectedItem>& items)
+{
+    bool changed = false;
+    for (const auto& item : dedupeSelectionItems(items)) {
+        if (!isSelected(item)) {
+            m_selection.push_back(item);
+            changed = true;
+        }
     }
 
-    emit selectionChanged();
+    if (syncBodySelectionFlags())
+        changed = true;
+
+    if (changed)
+        emit selectionChanged();
 }
 
 void Document::removeSelection(const SelectedItem& it)
 {
     auto itPos = std::find_if(m_selection.begin(), m_selection.end(),
         [&](const SelectedItem& s){ return s == it; });
-    if (itPos == m_selection.end()) return;
+    if (itPos == m_selection.end())
+        return;
+
     m_selection.erase(itPos);
+    bool changed = true;
 
-    bool isSketchType = (it.type == SelectedItem::Type::SketchPoint ||
-                         it.type == SelectedItem::Type::SketchLine  ||
-                         it.type == SelectedItem::Type::SketchArea);
-    if (!isSketchType) {
-        if (it.type == SelectedItem::Type::Body) {
-            if (Body* b = bodyById(it.bodyId)) b->setSelected(false);
-        } else {
-            // For sub-item (face/edge/vertex) removal: deselect the body only when it has
-            // no remaining selection items at all.
-            if (Body* b = bodyById(it.bodyId)) {
-                bool stillSelected = std::any_of(m_selection.begin(), m_selection.end(),
-                    [&](const SelectedItem& s){ return s.bodyId == it.bodyId; });
-                if (!stillSelected) b->setSelected(false);
-            }
-        }
-    }
+    if (syncBodySelectionFlags())
+        changed = true;
 
-    emit selectionChanged();
+    if (changed)
+        emit selectionChanged();
 }
 
 void Document::toggleSelection(const SelectedItem& it)
 {
-    if (isSelected(it)) removeSelection(it);
-    else addSelection(it);
+    toggleSelections({it});
+}
+
+void Document::toggleSelections(const std::vector<SelectedItem>& items)
+{
+    bool changed = false;
+    for (const auto& item : dedupeSelectionItems(items)) {
+        auto itPos = std::find_if(m_selection.begin(), m_selection.end(),
+            [&](const SelectedItem& selected) { return selected == item; });
+        if (itPos == m_selection.end()) {
+            m_selection.push_back(item);
+            changed = true;
+        } else {
+            m_selection.erase(itPos);
+            changed = true;
+        }
+    }
+
+    if (syncBodySelectionFlags())
+        changed = true;
+
+    if (changed)
+        emit selectionChanged();
 }
 
 bool Document::isSelected(const SelectedItem& it) const
@@ -158,6 +232,24 @@ bool Document::isSelected(const SelectedItem& it) const
 std::vector<Document::SelectedItem> Document::selectionItems() const
 {
     return m_selection;
+}
+
+bool Document::syncBodySelectionFlags()
+{
+    bool changed = false;
+    for (auto& body : m_bodies) {
+        const bool shouldSelect = std::any_of(m_selection.begin(),
+                                              m_selection.end(),
+                                              [&](const SelectedItem& item) {
+                                                  return !isSketchSelectionType(item.type)
+                                                      && item.bodyId == body->id();
+                                              });
+        if (body->selected() != shouldSelect) {
+            body->setSelected(shouldSelect);
+            changed = true;
+        }
+    }
+    return changed;
 }
 
 std::optional<SketchFaceSelection> Document::selectedSketchFaces(quint64 sketchId) const
@@ -211,18 +303,43 @@ void Document::clearSketchSelection(quint64 sketchId)
         return;
 
     m_selection.erase(it, m_selection.end());
-    emit selectionChanged();
+    bool changed = true;
+    if (syncBodySelectionFlags())
+        changed = true;
+    if (changed)
+        emit selectionChanged();
 }
 
 Body* Document::singleSelectedBody() const
 {
     Body* found = nullptr;
-    for (auto& b : m_bodies) {
-        if (b->selected()) {
-            if (found) return nullptr;  // more than one
-            found = b.get();
+    for (auto& body : m_bodies) {
+        const bool bodySelected = std::any_of(m_selection.begin(),
+                                              m_selection.end(),
+                                              [&](const SelectedItem& item) {
+                                                  return !isSketchSelectionType(item.type)
+                                                      && item.bodyId == body->id();
+                                              });
+        if (!bodySelected)
+            continue;
+
+        if (found)
+            return nullptr;
+
+        found = body.get();
+    }
+
+    if (found)
+        return found;
+
+    for (auto& body : m_bodies) {
+        if (body->selected()) {
+            if (found)
+                return nullptr;
+            found = body.get();
         }
     }
+
     return found;
 }
 

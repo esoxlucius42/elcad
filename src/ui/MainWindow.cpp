@@ -1213,13 +1213,18 @@ void MainWindow::onImportStep()
         return;
     }
 
-    m_document->clearSelection();
+    std::vector<Document::SelectedItem> importedSelection;
+    importedSelection.reserve(res.shapes.size());
     for (int i = 0; i < res.shapes.size(); ++i) {
         Body* b = m_document->addBody(res.names.value(i, QString("Import_%1").arg(i+1)));
         b->setShape(res.shapes[i]);
-        b->setSelected(true);
+
+        Document::SelectedItem item;
+        item.type = Document::SelectedItem::Type::Body;
+        item.bodyId = b->id();
+        importedSelection.push_back(item);
     }
-    emit m_document->selectionChanged();
+    m_document->setSelection(importedSelection);
     LOG_INFO("Import STEP: {} shape(s) added to document from '{}'",
              res.shapes.size(), path.toStdString());
 

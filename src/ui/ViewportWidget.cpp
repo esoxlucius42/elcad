@@ -223,11 +223,8 @@ void ViewportWidget::mousePressEvent(QMouseEvent* e)
                 m_dragMode = DragMode::GizmoDrag;
                 // Snapshot the selected body for undo on drag end
                 m_gizmoDragBody = nullptr;
-                if (m_document) {
-                    for (auto& b : m_document->bodies()) {
-                        if (b->selected()) { m_gizmoDragBody = b.get(); break; }
-                    }
-                }
+                if (m_document)
+                    m_gizmoDragBody = m_document->singleSelectedBody();
 #ifdef ELCAD_HAVE_OCCT
                 if (m_gizmoDragBody && m_gizmoDragBody->hasShape())
                     m_gizmoDragStartShape = m_gizmoDragBody->shape();
@@ -477,8 +474,10 @@ void ViewportWidget::handlePickClick(QPoint pos, bool addToSelection)
     if (!hit) {
         // No body/face hit — check for hovered sketch entity.
         if (m_hasHoveredSketchItem) {
-            if (!addToSelection) m_document->clearSelection();
-            m_document->addSelection(m_hoveredSketchItem);
+            if (addToSelection)
+                m_document->toggleSelection(m_hoveredSketchItem);
+            else
+                m_document->addSelection(m_hoveredSketchItem);
             update();
             return;
         }
@@ -496,27 +495,30 @@ void ViewportWidget::handlePickClick(QPoint pos, bool addToSelection)
             float distanceTol = 1e-3f;
             auto tris = m_renderer.expandFaceSelection(b, hitItem.index, angleDeg, distanceTol);
 
-            if (!addToSelection)
-                m_document->clearSelection();
-
+            std::vector<Document::SelectedItem> faceItems;
+            faceItems.reserve(tris.size());
             for (int t : tris) {
                 Document::SelectedItem it;
                 it.bodyId = hitItem.bodyId;
                 it.type = Document::SelectedItem::Type::Face;
                 it.index = t;
-                m_document->addSelection(it);
+                faceItems.push_back(it);
             }
+
+            if (addToSelection)
+                m_document->toggleSelections(faceItems);
+            else
+                m_document->addSelections(faceItems);
 
             update();
             return;
         }
     }
 
-    if (addToSelection) m_document->toggleSelection(hitItem);
-    else {
-        m_document->clearSelection();
+    if (addToSelection)
+        m_document->toggleSelection(hitItem);
+    else
         m_document->addSelection(hitItem);
-    }
 
     update();
 }
@@ -528,9 +530,7 @@ void ViewportWidget::handleBoxSelect(QRect rect, bool addToSelection)
     QMatrix4x4 vp = m_camera.projectionMatrix() * m_camera.viewMatrix();
     int W = width(), H = height();
 
-    if (!addToSelection)
-        m_document->clearSelection();
-
+    std::vector<Document::SelectedItem> bodyItems;
     for (auto& bodyPtr : m_document->bodies()) {
         Body* body = bodyPtr.get();
         if (!body->visible() || !body->hasBbox()) continue;
@@ -550,10 +550,18 @@ void ViewportWidget::handleBoxSelect(QRect rect, bool addToSelection)
             int sy = static_cast<int>((1.f - (ndcY * 0.5f + 0.5f)) * H);
             if (rect.contains(sx, sy)) inside = true;
         }
-        if (inside) body->setSelected(true);
+        if (inside) {
+            Document::SelectedItem item;
+            item.type = Document::SelectedItem::Type::Body;
+            item.bodyId = body->id();
+            bodyItems.push_back(item);
+        }
     }
 
-    emit m_document->selectionChanged();
+    if (addToSelection)
+        m_document->addSelections(bodyItems);
+    else
+        m_document->setSelection(bodyItems);
     update();
 }
 
@@ -633,7 +641,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent* e)
         }
         break;
     case Qt::Key_Space:
-        if (!m_sketch && m_document) {
+        if (m_document) {
             m_document->clearSelection();
             update();
         }

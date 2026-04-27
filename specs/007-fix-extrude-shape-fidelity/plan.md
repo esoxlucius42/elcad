@@ -16,7 +16,7 @@ Restore one-to-one shape fidelity between each selected sketch face and the soli
 **Target Platform**: Linux desktop  
 **Project Type**: Native desktop CAD application  
 **Performance Goals**: Keep sketch-face selection, extrusion setup, and result generation interactive for typical sketches; preserve existing single-face and multi-face extrusion responsiveness while adding no extra render passes or heavyweight topology scans beyond the existing sketch-region pipeline  
-**Constraints**: Millimetre units; `document/Document` remains the model owner; selection/profile fidelity stays in `src/sketch/`; OCCT-specific work remains behind `#ifdef ELCAD_HAVE_OCCT`; preserve internal holes/voids when present; avoid autonomous commits, pushes, tags, branch creation, or branch switching; agent work is expected to stay on `main` unless the user explicitly directs otherwise
+**Constraints**: Millimetre units; `document/Document` remains the model owner; selection/profile fidelity stays in `src/sketch/`; OCCT-specific work remains behind `#ifdef ELCAD_HAVE_OCCT`; preserve internal holes/voids when present; avoid autonomous commits, pushes, or tags
 **Scale/Scope**: `src/sketch/SketchPicker.cpp`, `src/sketch/SketchProfiles.h`, `src/sketch/SketchToWire.cpp`, `src/sketch/ExtrudeOperation.cpp`, any narrowly scoped UI orchestration in `src/ui/MainWindow.cpp` / `src/ui/ExtrudeDialog.cpp` if preview or commit wiring needs alignment, `tests/sketch/`, `tests/CMakeLists.txt`, feature docs in `specs/007-fix-extrude-shape-fidelity/`, and `.github/copilot-instructions.md`
 
 ## Constitution Check
@@ -37,7 +37,7 @@ Restore one-to-one shape fidelity between each selected sketch face and the soli
 - **PASS — Architecture**: The design preserves the `SketchPicker` → `SelectedSketchProfile` → `SketchToWire` → `ExtrudeOperation` seam and keeps UI code as an orchestrator instead of a geometry owner.
 - **PASS — Native Stack**: Design artifacts require no new libraries, services, or external runtimes.
 - **PASS — Verification**: Design artifacts pair the existing regression harness with explicit reviewer-run desktop scenarios for the screenshot repro, curved faces, holes, and multi-face extrusions.
-- **PASS — Delivery Control**: `copilot-instructions.md` will point to `specs/007-fix-extrude-shape-fidelity/plan.md`, and no autonomous commit, push, tag, branch creation, or branch switching action is introduced.
+- **PASS — Delivery Control**: `copilot-instructions.md` will point to `specs/007-fix-extrude-shape-fidelity/plan.md`, and no autonomous commit, push, or tag action is introduced.
 
 ## Project Structure
 

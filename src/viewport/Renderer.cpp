@@ -148,10 +148,9 @@ void Renderer::render(Camera& camera, Document* doc,
     // Extrude1D gizmo is managed by ViewportWidget — skip auto-management for it.
     if (!m_activeSketch) {
         if (m_gizmo.mode() != GizmoMode::Extrude1D) {
-            Body* selected = nullptr;
-            for (auto& b : doc->bodies()) {
-                if (b->selected() && b->hasBbox()) { selected = b.get(); break; }
-            }
+            Body* selected = doc->singleSelectedBody();
+            if (selected && !selected->hasBbox())
+                selected = nullptr;
             m_gizmo.setVisible(selected != nullptr);
             if (selected && !m_gizmo.isDragging()) {
                 m_gizmo.setPosition((selected->bboxMin() + selected->bboxMax()) * 0.5f);

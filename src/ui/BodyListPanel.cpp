@@ -118,19 +118,19 @@ void BodyListPanel::onSelectionChanged()
     if (m_updating || !m_doc) return;
     m_updating = true;
 
-    m_doc->clearSelection();
+    std::vector<Document::SelectedItem> items;
+    items.reserve(m_tree->selectedItems().size());
     for (auto* item : m_tree->selectedItems()) {
         quint64 id = item->data(0, Qt::UserRole).toULongLong();
-        if (Body* b = m_doc->bodyById(id)) {
-            Document::SelectedItem it;
-            it.type = Document::SelectedItem::Type::Body;
-            it.bodyId = id;
-            it.index = -1;
-            m_doc->addSelection(it);
+        if (m_doc->bodyById(id)) {
+            Document::SelectedItem selectedItem;
+            selectedItem.type = Document::SelectedItem::Type::Body;
+            selectedItem.bodyId = id;
+            selectedItem.index = -1;
+            items.push_back(selectedItem);
         }
     }
-    // Document::addSelection already emits selectionChanged per add; but avoid duplicate heavy updates — emit once
-    emit m_doc->selectionChanged();
+    m_doc->setSelection(items);
     m_updating = false;
 }
 

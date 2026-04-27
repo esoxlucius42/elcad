@@ -85,8 +85,7 @@ Supported Copilot CLI entrypoints:
 
 Repository policy for Copilot agents:
 
-- Do not create or switch branches autonomously.
-- Keep agent work on the `main` branch unless the user explicitly instructs otherwise.
+- Agents may create and switch branches autonomously when their workflow requires it.
 
 Examples of available agents include:
 

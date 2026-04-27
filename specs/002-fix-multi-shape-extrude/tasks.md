@@ -231,5 +231,5 @@ Developer B: Phase 4 — T017 (quickstart) → T018 → T019 (wait for T013 from
 - No automated test target currently exists; manual quickstart evidence is the primary verification mechanism (documented gap, per research.md Decision 4)
 - All OCCT code stays under `#ifdef ELCAD_HAVE_OCCT` guards as required by the plan
 - `Document` remains the mutation owner — no UI code may directly mutate Body state
-- Do not commit, tag, push, or create/switch branches as part of any task — leave all git decisions to the developer
+- Do not commit, tag, or push as part of any task — leave those git decisions to the developer
 - Stop at each Phase checkpoint to validate independently before proceeding

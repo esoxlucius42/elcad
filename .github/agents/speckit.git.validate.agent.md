@@ -9,6 +9,13 @@ description: Validate current branch follows feature branch naming conventions
 
 Validate that the current Git branch follows the expected feature branch naming conventions.
 
+## Execution Autonomy
+
+- You may run the read-only commands and file inspections required by this workflow without asking for additional permission.
+- Treat invocation of this agent as approval for those routine actions within its documented scope.
+- Ask only when a required decision is ambiguous or when repository or runtime safety rules require confirmation.
+- Repository-level safety constraints still override this autonomy.
+
 ## Prerequisites
 
 - Check if Git is available by running `git rev-parse --is-inside-work-tree 2>/dev/null`

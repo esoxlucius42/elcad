@@ -3,7 +3,7 @@
 **Branch**: `main` | **Date**: 2026-04-25 | **Spec**: `specs/003-fix-sketch-hole-selection/spec.md`
 **Input**: Feature specification from `/specs/003-fix-sketch-hole-selection/spec.md`
 
-**Planning note**: `.specify/scripts/bash/setup-plan.sh --json` reported `BRANCH=001-fix-extrude-preview-normals`, but repository policy and this feature spec require work to remain on `main`. No branch creation or branch switching was performed.
+**Planning note**: `.specify/scripts/bash/setup-plan.sh --json` reported `BRANCH=001-fix-extrude-preview-normals`, which was used only as setup context for this plan.
 
 ## Summary
 
@@ -18,7 +18,7 @@ Fix sketch face picking and extrusion for profiles with inner loops by deriving 
 **Target Platform**: Linux desktop  
 **Project Type**: Native desktop CAD application  
 **Performance Goals**: Preserve interactive sketch picking and extrude preview responsiveness for closed profiles with 1-3 inner holes; avoid whole-scene recomputation outside the existing extrude workflow  
-**Constraints**: Millimetre units; `Document` remains the committed state owner; OCCT work stays under `sketch/`; `#ifdef ELCAD_HAVE_OCCT` guards remain intact; existing edge-picking precedence must remain intact; no autonomous commits, tags, pushes, or branch changes  
+**Constraints**: Millimetre units; `Document` remains the committed state owner; OCCT work stays under `sketch/`; `#ifdef ELCAD_HAVE_OCCT` guards remain intact; existing edge-picking precedence must remain intact; no autonomous commits, tags, or pushes  
 **Scale/Scope**: Limited to completed-sketch area picking, selected-profile resolution, sketch-to-face conversion, extrusion behavior, and validation/documentation for profiles with holes
 
 ## Constitution Check

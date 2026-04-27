@@ -16,7 +16,7 @@ Support multi-face sketch extrusion by resolving the selected sketch areas into 
 **Target Platform**: Linux desktop  
 **Project Type**: Native desktop CAD application  
 **Performance Goals**: Keep preview and commit responsive for sketches with 2-5 selected disconnected faces while avoiding unnecessary full-scene recomputation outside the active extrude flow  
-**Constraints**: Millimetre units; `document/Document` remains the mutation owner; OCCT logic stays under `sketch/` helpers; `#ifdef ELCAD_HAVE_OCCT` guards remain intact; no autonomous commits, tags, pushes, or branch changes; use the repository's current checked-out state as source of truth  
+**Constraints**: Millimetre units; `document/Document` remains the mutation owner; OCCT logic stays under `sketch/` helpers; `#ifdef ELCAD_HAVE_OCCT` guards remain intact; no autonomous commits, tags, or pushes; use the repository's current checked-out state as source of truth  
 **Scale/Scope**: Changes are limited to sketch area selection resolution, sketch-to-face conversion, extrude preview/commit handling, and validation/documentation for multi-face sketch extrusion
 
 ## Constitution Check
@@ -27,7 +27,7 @@ Support multi-face sketch extrusion by resolving the selected sketch areas into 
 - **Document-centered architecture**: PASS — `Document` remains the owner of committed body mutations, while UI code only resolves selection and delegates geometry work to sketch/operation helpers.
 - **Native stack discipline**: PASS — stays within C++17/Qt6/OCCT/OpenGL and adds no new dependencies.
 - **Verification evidence**: PASS — plan requires build verification plus explicit manual validation for multi-face and partial-selection flows; the automated-test gap is documented rather than hidden.
-- **Spec Kit / git policy**: PASS — planning does not create/switch branches or create commits; Copilot guidance remains custom-agent based.
+- **Spec Kit / git policy**: PASS — planning does not create commits, pushes, or tags autonomously, and Copilot guidance remains custom-agent based.
 
 ## Project Structure
 

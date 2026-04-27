@@ -9,6 +9,13 @@ description: Initialize a Git repository with an initial commit
 
 Initialize a Git repository in the current project directory if one does not already exist.
 
+## Execution Autonomy
+
+- You may run the commands required by this workflow without asking for additional permission, but only when those commands are allowed by the active repository and runtime policies.
+- Treat invocation of this agent as approval for routine command execution within its documented scope.
+- If repository-level rules forbid autonomous repository initialization or commits, stop before those operations and report the policy conflict instead of asking for extra permission or proceeding anyway.
+- Ask only when a required decision is ambiguous or when a safety rule blocks the normal workflow.
+
 ## Execution
 
 Run the appropriate script from the project root:

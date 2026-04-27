@@ -17,6 +17,13 @@ $ARGUMENTS
 
 You **MUST** consider the user input before proceeding (if not empty).
 
+## Execution Autonomy
+
+- You may run the commands required by this workflow without asking for additional permission, but only when those commands are allowed by the active repository and runtime policies.
+- Treat invocation of this agent as approval for routine command execution within its documented scope.
+- Autonomous branch creation and branch switching are allowed for this agent when the workflow requires them.
+- Ask only when a required decision is ambiguous or when a safety rule blocks the normal workflow.
+
 ## Environment Variable Override
 
 If the user explicitly provided `GIT_BRANCH_NAME` (e.g., via environment variable, argument, or in their request), pass it through to the script by setting the `GIT_BRANCH_NAME` environment variable before invoking the script. When `GIT_BRANCH_NAME` is set:

@@ -47,9 +47,12 @@ public:
     };
 
     void   clearSelection();
+    void   setSelection(const std::vector<SelectedItem>& items);
     void   addSelection(const SelectedItem& it);
+    void   addSelections(const std::vector<SelectedItem>& items);
     void   removeSelection(const SelectedItem& it);
     void   toggleSelection(const SelectedItem& it);
+    void   toggleSelections(const std::vector<SelectedItem>& items);
     bool   isSelected(const SelectedItem& it) const;
     std::vector<SelectedItem> selectionItems() const;
     std::optional<SketchFaceSelection> selectedSketchFaces(quint64 sketchId = 0) const;
@@ -89,6 +92,8 @@ private:
     std::unique_ptr<Sketch>              m_activeSketch;
     std::vector<std::unique_ptr<Sketch>> m_sketches;
     int                                  m_nextSketchNumber{1};
+
+    bool syncBodySelectionFlags();
 
     // Current selection (mixed types allowed)
     std::vector<SelectedItem>            m_selection;

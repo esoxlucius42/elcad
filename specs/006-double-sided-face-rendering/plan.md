@@ -16,7 +16,7 @@ Restore reliable viewport visibility for extrude-generated faces by treating bod
 **Target Platform**: Linux desktop  
 **Project Type**: Native desktop CAD application  
 **Performance Goals**: Preserve interactive body rendering and orbiting; avoid geometry duplication or multi-pass surface rendering unless single-pass two-sided shading proves insufficient  
-**Constraints**: Millimetre units; rendering changes stay under `src/viewport/` and `src/shaders/`; `document/Document` remains the model owner; OCCT-specific code stays behind `#ifdef ELCAD_HAVE_OCCT`; preserve depth-based occlusion; do not create/switch branches or write git history; repository guidance prefers `main`, but the repository is already checked out on `005-fix-sketch-intersections` and the user explicitly prohibited branch switching, so this plan proceeds in place without any git branch operation  
+**Constraints**: Millimetre units; rendering changes stay under `src/viewport/` and `src/shaders/`; `document/Document` remains the model owner; OCCT-specific code stays behind `#ifdef ELCAD_HAVE_OCCT`; preserve depth-based occlusion; do not create commits, pushes, or tags autonomously  
 **Scale/Scope**: `src/shaders/phong.vert`, `src/shaders/phong.frag`, `src/viewport/Renderer.cpp`, `src/viewport/Renderer.h`, `src/viewport/MeshBuffer.cpp` for any narrowly scoped follow-up, and feature docs in `specs/006-double-sided-face-rendering/`
 
 ## Constitution Check
@@ -29,7 +29,7 @@ Restore reliable viewport visibility for extrude-generated faces by treating bod
 - **PASS — Document-Centered Architecture**: Persistent model ownership remains in `document/Document`; the planned fix stays in shader/render code and does not move geometry ownership into UI code.
 - **PASS — Buildable Native Stack Discipline**: Work remains inside the existing C++17/CMake/Qt6/OpenGL/OCCT stack with current include and guard patterns; no new dependencies are planned.
 - **PASS — Verification Evidence Required**: The plan defines concrete build evidence and reviewer-run viewport scenarios for the known repro, orbit inspection, and hidden-surface regression checks.
-- **PASS — Spec Kit Alignment & Human-Controlled Delivery**: Git auto-commit remains disabled, no branch creation/switching is performed, and `.github/copilot-instructions.md` is updated to the new plan path. The repository prefers `main`, but because the checkout was already on `005-fix-sketch-intersections` and the user forbade switching, remaining in place is the least-conflicting option.
+- **PASS — Spec Kit Alignment & Human-Controlled Delivery**: Git auto-commit remains disabled, `.github/copilot-instructions.md` is updated to the new plan path, and the design introduces no autonomous commit, push, or tag behavior.
 
 ### Post-Design Re-Check
 
@@ -37,7 +37,7 @@ Restore reliable viewport visibility for extrude-generated faces by treating bod
 - **PASS — Architecture**: The design keeps the change in the shared viewport shading path, with `MeshBuffer` only as a constrained fallback seam if shading alone does not resolve the bug.
 - **PASS — Native Stack**: Design artifacts require no new libraries, services, build tools, or non-native runtime components.
 - **PASS — Verification**: Design artifacts pair explicit Release build steps with manual validation for front-side, back-side, mixed-orientation, and occlusion scenarios.
-- **PASS — Delivery Control**: `copilot-instructions.md` now references `specs/006-double-sided-face-rendering/plan.md`, and no autonomous commit, tag, push, branch creation, or branch switching action was taken.
+- **PASS — Delivery Control**: `copilot-instructions.md` now references `specs/006-double-sided-face-rendering/plan.md`, and no autonomous commit, tag, or push action was taken.
 
 ## Project Structure
 

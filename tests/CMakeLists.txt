@@ -17,3 +17,23 @@ add_test(
     NAME sketch-intersection-regression
     COMMAND sketch_intersection_regression
 )
+
+add_executable(selection_regression
+    selection/SelectionFixtures.cpp
+    selection/AdditiveSelectionTest.cpp
+    selection/EmptySpaceClearTest.cpp
+    selection/ShortcutClearTest.cpp
+    selection/SelectionRegressionMain.cpp
+)
+
+target_include_directories(selection_regression PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(selection_regression PRIVATE elcad_core)
+
+add_test(
+    NAME selection-regression
+    COMMAND selection_regression
+)
